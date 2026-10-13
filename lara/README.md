@@ -7,7 +7,7 @@ Bildschirm zum Ausprobieren.
 ## Starten
 
 ```sh
-docker run -d --name lara -p 8081:80 ghcr.io/l8tenever/lara:latest
+docker run -d --name lara-bowling -p 8081:80 ghcr.io/l8tenever/lara-bowling:latest
 ```
 
 oder mit `compose.example.yaml`. WebXR (Brille/Handy) braucht **HTTPS**, also z. B. hinter einen

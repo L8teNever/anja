@@ -30,7 +30,7 @@ jobs:
 
       - name: Image-Name klein schreiben
         id: img
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lara" >> "$GITHUB_OUTPUT"
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lara-bowling" >> "$GITHUB_OUTPUT"   # "lara" ist schon ein anderes Projekt
 
       - uses: docker/build-push-action@v6
         with:

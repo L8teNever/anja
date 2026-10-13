@@ -71,6 +71,7 @@
   <!-- Player -->
   <section id="player" class="player" hidden>
     <div id="stage" class="stage"></div>
+    <div id="band-mark" class="band-mark" hidden></div>
     <div id="tap-hint" class="tap-hint">Ziehen zum Umschauen</div>
     <div class="p-top">
       <button id="p-back" class="round glass" aria-label="Zurück"><span class="material">arrow_back</span></button>
@@ -112,13 +113,38 @@
       <small id="kp-hint" class="fp-src"></small>
     </div>
 
+    <div id="pos-panel" class="key-panel glass" hidden>
+      <div class="kp-head"><b>Position &amp; Größe</b><button id="pp-close" class="round" aria-label="Schließen"><span class="material">close</span></button></div>
+      <label class="kp-slider"><span>Größe <b id="pv-size"></b></span><input id="pp-size" type="range" min="0.25" max="2.5" step="0.01"></label>
+      <label class="kp-slider"><span>Drehen <b id="pv-yaw"></b></span><input id="pp-yaw" type="range" min="-180" max="180" step="1"></label>
+      <label class="kp-slider"><span>Neigen <b id="pv-pitch"></b></span><input id="pp-pitch" type="range" min="-90" max="90" step="1"></label>
+      <label class="kp-slider"><span>Kippen <b id="pv-roll"></b></span><input id="pp-roll" type="range" min="-180" max="180" step="1"></label>
+      <label class="kp-slider"><span>Zoom (Bildschirm) <b id="pv-fov"></b></span><input id="pp-fov" type="range" min="20" max="140" step="1"></label>
+      <div class="kp-foot"><button id="pp-center" class="pill">Blick ausrichten</button><button id="pp-reset" class="pill">Zurücksetzen</button></div>
+      <small class="fp-src">In der Brille: Grifftaste halten und Controller bewegen, um das Video zu drehen.</small>
+    </div>
+
+    <div id="hand-panel" class="key-panel glass" hidden>
+      <div class="kp-head"><b>Hände</b><button id="hp-close" class="round" aria-label="Schließen"><span class="material">close</span></button></div>
+      <label class="kp-row"><span>Aus</span><input type="radio" name="hp-mode" value="off" class="rad"></label>
+      <label class="kp-row"><span>Hand-Tracking <small>(Brille: VR / Durchsicht)</small></span><input type="radio" name="hp-mode" value="xr" class="rad"></label>
+      <label class="kp-row"><span>Rotes Band <small>(Handy-Kamera sucht Rot)</small></span><input type="radio" name="hp-mode" value="band" class="rad"></label>
+      <div id="hp-band" hidden>
+        <label class="kp-slider"><span>Loch-Größe <b id="hv-size"></b></span><input id="hp-size" type="range" min="1" max="8" step="0.1"></label>
+        <label class="kp-slider"><span>Rot-Empfindlichkeit <b id="hv-sens"></b></span><input id="hp-sens" type="range" min="0" max="1" step="0.01"></label>
+        <label class="kp-row"><span>Erkanntes Rot markieren</span><input id="hp-mark" type="checkbox" class="sw"></label>
+      </div>
+      <small id="hp-status" class="fp-src"></small>
+    </div>
+
     <div class="p-bottom glass">
       <button id="p-play" class="round accent" aria-label="Abspielen"><span class="material">play_arrow</span></button>
       <span id="p-time" class="time">0:00</span>
       <input id="p-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Spulen">
       <span id="p-dur" class="time">0:00</span>
       <button id="p-mute" class="round" aria-label="Ton"><span class="material">volume_up</span></button>
-      <button id="p-recenter" class="round" aria-label="Ausrichten"><span class="material">center_focus_strong</span></button>
+      <button id="p-pos" class="round" aria-label="Position und Größe"><span class="material">open_with</span></button>
+      <button id="p-hands" class="round" aria-label="Hände"><span class="material">pan_tool</span></button>
     </div>
   </section>
 

@@ -33,13 +33,14 @@ function rrect(ctx, x, y, w, h, r) {
 }
 
 export class VRMenu {
-  constructor({ renderer, scene, video, title = '', onRecenter, chroma }) {
+  constructor({ renderer, scene, video, title = '', onRecenter, chroma, hands }) {
     this.renderer = renderer;
     this.scene = scene;
     this.video = video;
     this.title = title;
     this.onRecenter = onRecenter;
     this.chroma = chroma;          // { get(): bool, toggle() } – Greenscreen
+    this.hands = hands;            // { get(): bool, toggle() } – Hand-Tracking
     this.visible = false;
     this.hover = new Map();        // controller -> Button-ID
     this.drag = null;              // { ctrl, frac } beim Spulen
@@ -55,7 +56,7 @@ export class VRMenu {
       { id: 'mute', icon: 'volume_up', label: 'Ton' },
       { id: 'center', icon: 'center_focus_strong', label: 'Ausrichten' },
       { id: 'key', icon: 'layers', label: 'Grün weg' },
-      { id: 'hide', icon: 'expand_more', label: 'Ausblenden' },
+      { id: 'hands', icon: 'pan_tool', label: 'Hände' },
       { id: 'exit', icon: 'close', label: 'Beenden' },
     ].map((b, i) => ({ ...b, cx: 24 + slot * (i + 0.5), cy: ROW_Y, r: b.big ? 54 : 42 }));
 
@@ -96,7 +97,6 @@ export class VRMenu {
       c.addEventListener('disconnected', () => { c.userData.mode = null; c.userData.source = null; ray.visible = false; dot.visible = false; this.hover.delete(c); });
       c.addEventListener('selectstart', () => this._press(c));
       c.addEventListener('selectend', () => this._release(c));
-      c.addEventListener('squeezestart', () => this.toggle());
       scene.add(c);
       return c;
     });
@@ -280,7 +280,7 @@ export class VRMenu {
       case 'mute': v.muted = !v.muted; break;
       case 'center': this.onRecenter?.(); this._place = true; break;
       case 'key': this.chroma?.toggle(); break;
-      case 'hide': this.hide(); break;
+      case 'hands': this.hands?.toggle(); break;
       case 'exit': this.renderer.xr.getSession()?.end(); break;
     }
     this.draw();
@@ -347,7 +347,7 @@ export class VRMenu {
       let name = b.icon, label = b.label;
       if (b.id === 'play') { name = v.paused ? 'play_arrow' : 'pause'; label = v.paused ? 'Abspielen' : 'Pause'; }
       if (b.id === 'mute') { name = v.muted ? 'volume_off' : 'volume_up'; label = v.muted ? 'Ton an' : 'Ton aus'; }
-      const keyOn = b.id === 'key' && this.chroma?.get();
+      const keyOn = (b.id === 'key' && this.chroma?.get()) || (b.id === 'hands' && this.hands?.get());
       const on = hovered.has(b.id);
       ctx.beginPath(); ctx.arc(b.cx, b.cy, on ? b.r + 4 : b.r, 0, Math.PI * 2);
       ctx.fillStyle = b.big ? C.accent : on ? C.hover : keyOn ? 'rgba(126,224,176,0.30)' : C.btn; ctx.fill();
@@ -361,7 +361,7 @@ export class VRMenu {
 
     ctx.font = '400 19px system-ui, sans-serif';
     ctx.fillStyle = C.muted; ctx.textAlign = 'center';
-    ctx.fillText('Abzug/Pinch ins Leere: Menü ein/aus · Zurück-Taste: beenden', W / 2, H - 30);
+    ctx.fillText('Ins Leere tippen: Menü · Grifftaste halten + bewegen: Video drehen', W / 2, H - 30);
 
     this.texture.needsUpdate = true;
   }

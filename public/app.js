@@ -733,9 +733,7 @@ function onFormatInput(e) {
 }
 for (const id of ['fp-kind', 'fp-stereo', 'fp-swap', 'fp-fov']) $(id).addEventListener('input', onFormatInput);
 $('p-fmt').addEventListener('click', () => {
-  $('key-panel').hidden = true;
-  const p = $('fmt-panel'); p.hidden = !p.hidden;
-  if (viewer) fillFormatPanel(viewer.format, viewer.formatSource);
+  if (openPanel('fmt-panel') && viewer) fillFormatPanel(viewer.format, viewer.formatSource);
 });
 $('fp-close').addEventListener('click', () => { $('fmt-panel').hidden = true; });
 $('fp-save').addEventListener('click', async () => {
@@ -782,6 +780,14 @@ async function openPlayer(src, title, item = null) {
 
   viewer = new Viewer($('stage'), video, { title });
   viewer.onFormat = (f, source) => { if (!$('fmt-panel').hidden) fillFormatPanel(f, source); };
+  // Lage/Groesse pro Video merken
+  const poseKey = `anja-pose:${src}`;
+  try { const ps = JSON.parse(localStorage.getItem(poseKey)); if (ps) viewer.setPose(ps, true); } catch {}
+  viewer.onPose = (p) => { try { localStorage.setItem(poseKey, JSON.stringify(p)); } catch {} if (!$('pos-panel').hidden) syncPosUI(p); };
+  viewer.onHands = (on) => { if (on !== (handCfg.mode === 'xr')) { handCfg.mode = on ? 'xr' : 'off'; saveHandCfg(); if (handCfg.mode !== 'band') stopBand(); syncHandUI(); } };
+  viewer.renderer.xr.addEventListener('sessionstart', syncHandUI);
+  viewer.renderer.xr.addEventListener('sessionend', syncHandUI);
+  applyHandMode();
   detectFormat(src, item);
   const hint = $('tap-hint'); hint.classList.remove('gone');
   viewer.onInteract = () => hint.classList.add('gone');
@@ -856,8 +862,8 @@ function closePlayer() {
   if (!viewer) return;
   if (viewer.inXR) viewer.endXR();
   $('xr-overlay').hidden = true;
-  stopCam(); setPicking(false);
-  $('key-panel').hidden = true; $('fmt-panel').hidden = true;
+  stopBand(); stopCam(); setPicking(false);
+  for (const p of PANELS) $(p).hidden = true;
   if (fmtCtx) { clearTimeout(fmtCtx.timer); fmtCtx = null; }
   viewer.onChroma = null;
   video.pause(); video.removeAttribute('src'); video.load();
@@ -882,7 +888,120 @@ $('p-mute').addEventListener('click', () => {
   if (!video) return; video.muted = !video.muted;
   setIcon($('p-mute'), video.muted ? 'volume_off' : 'volume_up');
 });
-$('p-recenter').addEventListener('click', () => viewer?.recenter());
+/* ---------------- Position & Groesse ----------------
+ * Groesse (kleiner = weiter weg / "rauszoomen"), Drehen, Neigen, Kippen – pro Video gemerkt.
+ */
+const PANELS = ['fmt-panel', 'key-panel', 'pos-panel', 'hand-panel'];
+function openPanel(id) {
+  for (const p of PANELS) if (p !== id) $(p).hidden = true;
+  const el = $(id); el.hidden = !el.hidden;
+  return !el.hidden;
+}
+const POS_FMT = { size: (v) => `${Math.round(v * 100)} %`, yaw: (v) => `${Math.round(v)}°`, pitch: (v) => `${Math.round(v)}°`, roll: (v) => `${Math.round(v)}°` };
+function syncPosUI(p) {
+  for (const [k, f] of Object.entries(POS_FMT)) { $(`pp-${k}`).value = p[k]; $(`pv-${k}`).textContent = f(Number(p[k])); }
+  if (viewer) { $('pp-fov').value = Math.round(viewer.fov); $('pv-fov').textContent = `${Math.round(viewer.fov)}°`; }
+}
+$('p-pos').addEventListener('click', () => { if (openPanel('pos-panel') && viewer) syncPosUI(viewer.pose); });
+$('pp-close').addEventListener('click', () => { $('pos-panel').hidden = true; });
+for (const k of Object.keys(POS_FMT)) $(`pp-${k}`).addEventListener('input', (e) => viewer?.setPose({ [k]: Number(e.target.value) }));
+$('pp-fov').addEventListener('input', (e) => { if (!viewer) return; viewer._zoom(Number(e.target.value) - viewer.fov); syncPosUI(viewer.pose); });
+$('pp-center').addEventListener('click', () => { if (!viewer) return; viewer.inXR ? viewer._recenterXR() : viewer.recenter(); });
+$('pp-reset').addEventListener('click', () => { if (!viewer) return; viewer.setPose({ yaw: 0, pitch: 0, roll: 0, size: 1 }); viewer._zoom(75 - viewer.fov); viewer.recenter(); syncPosUI(viewer.pose); });
+
+/* ---------------- Haende ----------------
+ * Hand-Tracking: in der Brille (VR/Durchsicht) zeigt der Browser deine Haende;
+ *   in der Durchsicht werden sie aus dem Video ausgeschnitten -> echte Haende sichtbar.
+ * Rotes Band: am Handy sucht die Kamera ein rotes Band (z. B. am Handgelenk) und macht
+ *   das Video dort durchsichtig, damit man die echte Hand sieht.
+ */
+const HAND_KEY = 'anja-hands';
+const handCfg = (() => { try { return { mode: 'off', size: 3.5, sens: 0.5, mark: false, ...JSON.parse(localStorage.getItem(HAND_KEY)) }; } catch { return { mode: 'off', size: 3.5, sens: 0.5, mark: false }; } })();
+const saveHandCfg = () => { try { localStorage.setItem(HAND_KEY, JSON.stringify(handCfg)); } catch {} };
+let band = null;
+
+function syncHandUI() {
+  document.querySelectorAll('input[name=hp-mode]').forEach((r) => { r.checked = r.value === handCfg.mode; });
+  $('p-hands').classList.toggle('on', handCfg.mode !== 'off');
+  $('hp-band').hidden = handCfg.mode !== 'band';
+  $('hp-size').value = handCfg.size; $('hv-size').textContent = `${handCfg.size.toFixed(1)}×`;
+  $('hp-sens').value = handCfg.sens; $('hv-sens').textContent = `${Math.round(handCfg.sens * 100)} %`;
+  $('hp-mark').checked = handCfg.mark;
+  if (handCfg.mode === 'xr') $('hp-status').textContent = viewer?.inXR ? 'Hände werden in der Brille angezeigt.' : 'Starte VR oder Durchsicht – dann siehst du deine Hände (Controller ablegen).';
+  else if (handCfg.mode === 'off') $('hp-status').textContent = '';
+}
+
+async function applyHandMode() {
+  if (!viewer) return;
+  viewer.setHands(handCfg.mode === 'xr');
+  if (handCfg.mode === 'band') await startBand(); else stopBand();
+  syncHandUI();
+}
+
+$('p-hands').addEventListener('click', () => { if (openPanel('hand-panel')) syncHandUI(); });
+$('hp-close').addEventListener('click', () => { $('hand-panel').hidden = true; });
+document.querySelectorAll('input[name=hp-mode]').forEach((r) => r.addEventListener('change', () => {
+  handCfg.mode = r.value; saveHandCfg(); applyHandMode();
+}));
+$('hp-size').addEventListener('input', (e) => { handCfg.size = Number(e.target.value); saveHandCfg(); syncHandUI(); });
+$('hp-sens').addEventListener('input', (e) => { handCfg.sens = Number(e.target.value); saveHandCfg(); syncHandUI(); });
+$('hp-mark').addEventListener('change', (e) => { handCfg.mark = e.target.checked; saveHandCfg(); });
+
+async function startBand() {
+  if (band) return;
+  if (!camStream) await startCam();
+  if (!camStream) { handCfg.mode = 'off'; saveHandCfg(); syncHandUI(); return; }
+  $('kp-cam').checked = true;
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  band = { c, ctx, pos: null, lost: 0, raf: 0, tick: 0 };
+  const step = () => {
+    if (!band) return;
+    band.raf = requestAnimationFrame(step);
+    if (band.tick++ % 2) return;                     // ~30 Mal pro Sekunde reicht
+    const v = $('cam-bg');
+    if (!v || v.readyState < 2 || !viewer) return;
+    const vw = v.videoWidth, vh = v.videoHeight;
+    const cw = 160, ch = Math.max(1, Math.round((160 * vh) / vw));
+    if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+    ctx.drawImage(v, 0, 0, cw, ch);
+    const d = ctx.getImageData(0, 0, cw, ch).data;
+    // "Rot": Rot deutlich staerker als Gruen und Blau; Empfindlichkeit verschiebt die Schwelle
+    const thr = 30 + (1 - handCfg.sens) * 90;
+    let n = 0, sx = 0, sy = 0;
+    for (let y = 0, i = 0; y < ch; y++) {
+      for (let x = 0; x < cw; x++, i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        if (r > 70 && r - Math.max(g, b) > thr && r > 1.5 * g) { n++; sx += x; sy += y; }
+      }
+    }
+    if (n < cw * ch * 0.0015) {
+      if (++band.lost > 12) { band.pos = null; viewer.setHole(null); $('band-mark').hidden = true; $('hp-status').textContent = 'Kein rotes Band im Bild.'; }
+      return;
+    }
+    band.lost = 0;
+    // Kamerabild-Koordinaten -> Bildschirm (Kamerabild ist "cover" eingepasst)
+    const rect = $('stage').getBoundingClientRect();
+    const sc = Math.max(rect.width / vw, rect.height / vh);
+    const ox = (rect.width - vw * sc) / 2, oy = (rect.height - vh * sc) / 2;
+    const px = rect.left + ox + ((sx / n) / cw) * vw * sc;
+    const py = rect.top + oy + ((sy / n) / ch) * vh * sc;
+    const pr = Math.sqrt(n / Math.PI) * (vw / cw) * sc * handCfg.size;   // Bandgroesse * Faktor
+    const p = band.pos;
+    band.pos = p ? { x: p.x + (px - p.x) * 0.5, y: p.y + (py - p.y) * 0.5, r: p.r + (pr - p.r) * 0.3 } : { x: px, y: py, r: pr };
+    viewer.setHole(band.pos);
+    const m = $('band-mark');
+    m.hidden = !handCfg.mark;
+    if (handCfg.mark) { Object.assign(m.style, { left: `${band.pos.x - rect.left}px`, top: `${band.pos.y - rect.top}px`, width: `${band.pos.r * 2}px`, height: `${band.pos.r * 2}px` }); }
+    $('hp-status').textContent = 'Rotes Band erkannt – das Video ist dort durchsichtig.';
+  };
+  step();
+}
+function stopBand() {
+  if (!band) return;
+  cancelAnimationFrame(band.raf); band = null;
+  viewer?.setHole(null); $('band-mark').hidden = true;
+}
 $('p-gyro').addEventListener('click', async () => {
   if (!viewer) return;
   const on = await viewer.setGyro(!viewer.gyro);
@@ -927,8 +1046,7 @@ function autoKeyWhenReady(showToast) {
 }
 
 $('p-key').addEventListener('click', () => {
-  $('fmt-panel').hidden = true;
-  const p = $('key-panel'); p.hidden = !p.hidden;
+  openPanel('key-panel');
   $('kp-cam-row').hidden = !navigator.mediaDevices?.getUserMedia;
   $('kp-save').hidden = !uploadEnabled || !navigator.onLine;
 });
@@ -994,6 +1112,7 @@ async function startCam() {
   if (!viewer.gyro && !$('p-gyro').hidden) $('p-gyro').click();
 }
 function stopCam() {
+  if (band) { stopBand(); if (handCfg.mode === 'band') { handCfg.mode = 'off'; saveHandCfg(); syncHandUI(); } }
   camStream?.getTracks().forEach((t) => t.stop()); camStream = null;
   $('cam-bg')?.remove();
   $('kp-cam').checked = false;

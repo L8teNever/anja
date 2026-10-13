@@ -95,6 +95,24 @@ Im Player oben auf das Ebenen-Symbol tippen:
 Im VR-Menü der Brille schaltet „Grün weg“ den Greenscreen an und aus.
 Kamera und Durchsicht brauchen HTTPS.
 
+## Position, Größe und Zoom
+
+Im Player unten das Pfeilkreuz: **Größe** (kleiner = Video weiter weg, auch in der Brille),
+**Drehen**, **Neigen**, **Kippen** und der Bildschirm-**Zoom** (20–140°, auch per Mausrad
+oder zwei Fingern). Wird pro Video gemerkt. In der Brille: **Grifftaste halten und
+Controller bewegen** dreht das Video mit; kurz drücken öffnet das Menü.
+
+## Hände
+
+Im Player unten die Hand:
+- **Hand-Tracking** – in der Brille (VR oder Durchsicht) zeigt der Browser deine Hände.
+  In VR als Hände im Bild, in der Durchsicht werden sie aus dem Video ausgeschnitten,
+  damit man die echten Hände durch die Kamera sieht. Controller einfach ablegen.
+  Im VR-Menü schaltet „Hände“ das an und aus.
+- **Rotes Band** – am Handy: ein rotes Band (z. B. ums Handgelenk) wird von der Kamera
+  gesucht, und das Video wird um die Hand herum durchsichtig. Loch-Größe und
+  Rot-Empfindlichkeit einstellbar, „Erkanntes Rot markieren“ zeigt, was gefunden wurde.
+
 ## Raus aus VR / Durchsicht
 
 - **Brille:** unten im Blickfeld schwebt immer ein kleiner Griff „Menü | Beenden“.

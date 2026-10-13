@@ -173,3 +173,9 @@ input[type=range] { flex: 1; min-width: 40px; accent-color: var(--accent); heigh
 .xo-bar { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(16px + var(--safe-b)); display: flex; gap: 8px; padding: 8px; border-radius: 99px; }
 .xo-bar .round:not(.accent) { background: transparent; }
 #xo-key.on { background: var(--ok); color: #0d2a1d; }
+
+#p-hands.on { background: var(--ok); color: #0d2a1d; }
+.rad { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+.kp-row small { color: var(--muted); font-size: 12px; }
+.band-mark { position: absolute; z-index: 1; border: 3px solid #ff4d4d; border-radius: 50%; pointer-events: none;
+  transform: translate(-50%, -50%); box-shadow: 0 0 0 2px rgba(0,0,0,.4); }

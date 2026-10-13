@@ -1,4 +1,5 @@
 import { hydrateIcons, icon, setIcon } from '/icons.js';
+import { findBand, learnBand, OneEuro, BAND_DEFAULT } from '/band.js';
 import { fromName, fromMeta, fromFrame, fromSize, metaFromUrl, metaFromFile, combine, normalize, describe,
   grabFrame, renderPreview, PROJ_LABEL, STEREO_LABEL, defaultFov, autoKey, CHROMA_DEFAULT } from '/projection.js';
 
@@ -923,7 +924,7 @@ $('pp-reset').addEventListener('click', () => { if (!viewer) return; viewer.setP
  *   das Video dort durchsichtig, damit man die echte Hand sieht.
  */
 const HAND_KEY = 'anja-hands';
-const HAND_DEFAULT = { mode: 'off', size: 3.5, sens: 0.5, mark: false, fov: 70 };
+const HAND_DEFAULT = { mode: 'off', size: 5, sens: 0.5, mark: false, fov: 70 };
 const handCfg = (() => { try { return { ...HAND_DEFAULT, ...JSON.parse(localStorage.getItem(HAND_KEY)) }; } catch { return { ...HAND_DEFAULT }; } })();
 const saveHandCfg = () => { try { localStorage.setItem(HAND_KEY, JSON.stringify(handCfg)); } catch {} };
 let band = null;
@@ -933,10 +934,13 @@ function syncHandUI() {
   $('p-hands').classList.toggle('on', handCfg.mode !== 'off');
   $('hp-band').hidden = handCfg.mode !== 'band';
   $('hp-size').value = handCfg.size; $('hv-size').textContent = `${handCfg.size.toFixed(1)}×`;
+  const col = handCfg.color;
+  $('hv-color').style.background = `hsl(${(col || BAND_DEFAULT).hue} 85% 50%)`;
+  $('hv-color-txt').textContent = col ? `angelernt (${col.hue}°)` : 'Standard Rot';
   $('hp-sens').value = handCfg.sens; $('hv-sens').textContent = `${Math.round(handCfg.sens * 100)} %`;
   $('hp-mark').checked = handCfg.mark;
   $('hp-fov').value = handCfg.fov; $('hv-fov').textContent = `${handCfg.fov}°`;
-  viewer?.setBand({ on: handCfg.mode === 'band', size: handCfg.size, sens: handCfg.sens, fov: handCfg.fov, video: $('cam-bg') || null });
+  viewer?.setBand({ on: handCfg.mode === 'band', size: handCfg.size, sens: handCfg.sens, fov: handCfg.fov, color: handCfg.color || BAND_DEFAULT, video: $('cam-bg') || null });
   if (handCfg.mode === 'xr') $('hp-status').textContent = viewer?.inXR ? 'Hände werden in der Brille angezeigt.' : 'Starte VR oder Durchsicht – dann siehst du deine Hände (Controller ablegen).';
   else if (handCfg.mode === 'off') $('hp-status').textContent = '';
 }
@@ -965,52 +969,66 @@ async function startBand() {
   $('kp-cam').checked = true;
   const c = document.createElement('canvas');
   const ctx = c.getContext('2d', { willReadFrequently: true });
-  band = { c, ctx, pos: null, lost: 0, raf: 0, tick: 0 };
-  const step = () => {
+  band = { c, ctx, prev: null, lost: 0, raf: 0, vfc: 0, fx: new OneEuro(), fy: new OneEuro(), fr: new OneEuro(0.8, 2) };
+  // jedes neue Kamerabild auswerten (requestVideoFrameCallback), sonst jeden Bildschirm-Frame
+  const schedule = () => {
     if (!band) return;
-    band.raf = requestAnimationFrame(step);
-    if (band.tick++ % 2) return;                     // ~30 Mal pro Sekunde reicht
     const v = $('cam-bg');
-    if (!v || v.readyState < 2 || !viewer || viewer.inXR) return;   // in der Brille uebernimmt der Viewer
+    if (v?.requestVideoFrameCallback) band.vfc = v.requestVideoFrameCallback(() => { step(); schedule(); });
+    else band.raf = requestAnimationFrame(() => { step(); schedule(); });
+  };
+  const step = () => {
+    const v = $('cam-bg');
+    if (!band || !v || v.readyState < 2 || !viewer || viewer.inXR) return;   // in der Brille uebernimmt der Viewer
     const vw = v.videoWidth, vh = v.videoHeight;
-    const cw = 160, ch = Math.max(1, Math.round((160 * vh) / vw));
+    const cw = 240, ch = Math.max(1, Math.round((240 * vh) / vw));
     if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
     ctx.drawImage(v, 0, 0, cw, ch);
-    const d = ctx.getImageData(0, 0, cw, ch).data;
-    // "Rot": Rot deutlich staerker als Gruen und Blau; Empfindlichkeit verschiebt die Schwelle
-    const thr = 30 + (1 - handCfg.sens) * 90;
-    let n = 0, sx = 0, sy = 0;
-    for (let y = 0, i = 0; y < ch; y++) {
-      for (let x = 0; x < cw; x++, i += 4) {
-        const r = d[i], g = d[i + 1], b = d[i + 2];
-        if (r > 70 && r - Math.max(g, b) > thr && r > 1.5 * g) { n++; sx += x; sy += y; }
+    band.last = { data: ctx.getImageData(0, 0, cw, ch).data, w: cw, h: ch };
+    const r = findBand(band.last.data, cw, ch, handCfg.color || BAND_DEFAULT, handCfg.sens, false, band.prev);
+    if (!r) {
+      if (++band.lost > 8) {
+        band.prev = null; band.fx.reset(); band.fy.reset(); band.fr.reset();
+        viewer.setHole(null); $('band-mark').hidden = true; $('hp-status').textContent = 'Kein Band im Bild.';
       }
-    }
-    if (n < cw * ch * 0.0015) {
-      if (++band.lost > 12) { band.pos = null; viewer.setHole(null); $('band-mark').hidden = true; $('hp-status').textContent = 'Kein rotes Band im Bild.'; }
       return;
     }
-    band.lost = 0;
+    band.lost = 0; band.prev = r;
+    const t = performance.now();
+    const x = band.fx.filter(r.x, t), y = band.fy.filter(r.y, t), rr = band.fr.filter(r.r, t);
     // Kamerabild-Koordinaten -> Bildschirm (Kamerabild ist "cover" eingepasst)
     const rect = $('stage').getBoundingClientRect();
     const sc = Math.max(rect.width / vw, rect.height / vh);
     const ox = (rect.width - vw * sc) / 2, oy = (rect.height - vh * sc) / 2;
-    const px = rect.left + ox + ((sx / n) / cw) * vw * sc;
-    const py = rect.top + oy + ((sy / n) / ch) * vh * sc;
-    const pr = Math.sqrt(n / Math.PI) * (vw / cw) * sc * handCfg.size;   // Bandgroesse * Faktor
-    const p = band.pos;
-    band.pos = p ? { x: p.x + (px - p.x) * 0.5, y: p.y + (py - p.y) * 0.5, r: p.r + (pr - p.r) * 0.3 } : { x: px, y: py, r: pr };
-    viewer.setHole(band.pos);
+    const pos = { x: rect.left + ox + x * vw * sc, y: rect.top + oy + y * vh * sc, r: rr * vw * sc * handCfg.size };
+    viewer.setHole(pos);
     const m = $('band-mark');
     m.hidden = !handCfg.mark;
-    if (handCfg.mark) { Object.assign(m.style, { left: `${band.pos.x - rect.left}px`, top: `${band.pos.y - rect.top}px`, width: `${band.pos.r * 2}px`, height: `${band.pos.r * 2}px` }); }
-    $('hp-status').textContent = 'Rotes Band erkannt – das Video ist dort durchsichtig.';
+    if (handCfg.mark) {
+      const br = rr * vw * sc;   // Groesse des Bands selbst
+      Object.assign(m.style, { left: `${pos.x - rect.left}px`, top: `${pos.y - rect.top}px`, width: `${br * 2}px`, height: `${br * 2}px` });
+    }
+    $('hp-status').textContent = 'Band erkannt – das Video ist dort durchsichtig.';
   };
-  step();
+  schedule();
 }
+// Farbe des Bands uebernehmen: Band in die Bildmitte halten und tippen
+$('hp-learn').addEventListener('click', async () => {
+  if (handCfg.mode !== 'band') { handCfg.mode = 'band'; saveHandCfg(); await applyHandMode(); }
+  setTimeout(() => {
+    const l = band?.last;
+    const col = l && learnBand(l.data, l.w, l.h, 0.5, 0.5, 0.22);
+    if (!col) { toast('Kein farbiges Band in der Bildmitte gefunden'); return; }
+    handCfg.color = col; saveHandCfg(); syncHandUI();
+    toast(`Band-Farbe übernommen (Farbton ${col.hue}°)`);
+  }, 300);
+});
+$('hp-unlearn').addEventListener('click', () => { delete handCfg.color; saveHandCfg(); syncHandUI(); toast('Standardfarbe Rot'); });
 function stopBand() {
   if (!band) return;
-  cancelAnimationFrame(band.raf); band = null;
+  cancelAnimationFrame(band.raf);
+  try { $('cam-bg')?.cancelVideoFrameCallback?.(band.vfc); } catch {}
+  band = null;
   viewer?.setHole(null); $('band-mark').hidden = true;
 }
 $('p-gyro').addEventListener('click', async () => {

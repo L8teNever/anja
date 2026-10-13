@@ -179,3 +179,4 @@ input[type=range] { flex: 1; min-width: 40px; accent-color: var(--accent); heigh
 .kp-row small { color: var(--muted); font-size: 12px; }
 .band-mark { position: absolute; z-index: 1; border: 3px solid #ff4d4d; border-radius: 50%; pointer-events: none;
   transform: translate(-50%, -50%); box-shadow: 0 0 0 2px rgba(0,0,0,.4); }
+.swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-left: 4px; }

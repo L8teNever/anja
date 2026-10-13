@@ -130,7 +130,10 @@
       <label class="kp-row"><span>Hand-Tracking <small>(Brille: VR / Durchsicht)</small></span><input type="radio" name="hp-mode" value="xr" class="rad"></label>
       <label class="kp-row"><span>Rotes Band <small>(Handy-Kamera sucht Rot)</small></span><input type="radio" name="hp-mode" value="band" class="rad"></label>
       <div id="hp-band" hidden>
-        <label class="kp-slider"><span>Loch-Größe <b id="hv-size"></b></span><input id="hp-size" type="range" min="1" max="8" step="0.1"></label>
+        <div class="kp-row"><span>Band-Farbe <i id="hv-color" class="swatch"></i> <small id="hv-color-txt"></small></span>
+          <span class="kp-color"><button id="hp-learn" class="pill pill-accent">Anlernen</button><button id="hp-unlearn" class="pill">Rot</button></span></div>
+        <small class="fp-src">Anlernen: Band in die Bildmitte halten und tippen.</small>
+        <label class="kp-slider"><span>Loch-Größe <b id="hv-size"></b></span><input id="hp-size" type="range" min="1" max="10" step="0.1"></label>
         <label class="kp-slider"><span>Rot-Empfindlichkeit <b id="hv-sens"></b></span><input id="hp-sens" type="range" min="0" max="1" step="0.01"></label>
         <label class="kp-row"><span>Erkanntes Rot markieren</span><input id="hp-mark" type="checkbox" class="sw"></label>
         <label class="kp-slider"><span>Kamera-Winkel (VR) <b id="hv-fov"></b></span><input id="hp-fov" type="range" min="40" max="120" step="1"></label>

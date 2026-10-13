@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { VRButton } from '/vendor/VRButton.js';
 import { VRMenu } from '/vr-menu.js';
 import { DEFAULT_FORMAT, CHROMA_DEFAULT, normalize, params, dirToUV, fromSize } from '/projection.js';
-import { detectRed } from '/band.js';
+import { findBand, OneEuro, BAND_DEFAULT } from '/band.js';
 
 
 const BLACK = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
@@ -521,7 +521,8 @@ export class Viewer {
     const session = this.renderer.xr.getSession();
     if (!session) return;
     const ar = session.environmentBlendMode && session.environmentBlendMode !== 'opaque';
-    const st = this._bandState || (this._bandState = { n: 0, lost: 99, dir: null, ang: 0.2 });
+    const st = this._bandState || (this._bandState = { n: 0, lost: 99, dir: null, ang: 0.2, prev: null, vt: -1,
+      f: [new OneEuro(), new OneEuro(), new OneEuro()], fa: new OneEuro(0.8, 2) });
     const head = new THREE.Quaternion(); this.renderer.xr.getCamera().getWorldQuaternion(head);
     const vid = b.video && b.video.readyState >= 2 ? b.video : null;
     const camAccess = session.enabledFeatures?.includes?.('camera-access');
@@ -531,21 +532,26 @@ export class Viewer {
       u.uCamRot.value.setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(head.clone().invert()));
       u.uCamTan.value.set(tanX, tanY);
     }
-    if (st.n++ % 3 === 0) {                     // ~20–30 Mal pro Sekunde suchen
+    // Kamera-Video: jedes neue Kamerabild; Durchsicht-Kamerabild: jeden 2. Frame
+    const fresh = vid ? vid.currentTime !== st.vt : st.n++ % 2 === 0;
+    if (fresh) {
+      if (vid) st.vt = vid.currentTime;
+      const color = b.color || BAND_DEFAULT;
       let found = null;
       if (camAccess && frame) {
         const img = this._readCamAccess(frame, session);
         if (img) {
-          const r = detectRed(img.data, img.w, img.h, b.sens, true);
-          if (r) found = this._dirFromView(img.view, r);
+          const r = findBand(img.data, img.w, img.h, color, b.sens, true, st.prev);
+          if (r) { st.prev = r; found = this._dirFromView(img.view, r); }
         }
       } else if (vid) {
         const c = this._bandCanvas || (this._bandCanvas = document.createElement('canvas'));
-        const w = 160, h = Math.max(1, Math.round((160 * vid.videoHeight) / vid.videoWidth));
+        const w = 240, h = Math.max(1, Math.round((240 * vid.videoHeight) / vid.videoWidth));
         if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
         const ctx = c.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(vid, 0, 0, w, h);
-        const r = detectRed(ctx.getImageData(0, 0, w, h).data, w, h, b.sens);
+        const r = findBand(ctx.getImageData(0, 0, w, h).data, w, h, color, b.sens, false, st.prev);
+        if (r) st.prev = r;
         if (r) {
           const toDir = (x, y) => new THREE.Vector3((x * 2 - 1) * tanX, -(y * 2 - 1) * tanY, -1).normalize().applyQuaternion(head);
           const d = toDir(r.x, r.y), e = toDir(Math.min(1, r.x + r.r), r.y);
@@ -558,10 +564,14 @@ export class Viewer {
       }
       if (found) {
         st.lost = 0;
-        st.dir = st.dir ? st.dir.lerp(found.dir, 0.5).normalize() : found.dir;
-        st.ang += (found.ang - st.ang) * 0.3;
-        this._bandStatus('Rotes Band erkannt');
-      } else if (++st.lost > 6) { st.dir = null; this._bandStatus('Kein rotes Band im Bild'); }
+        const t = performance.now();
+        st.dir = new THREE.Vector3(st.f[0].filter(found.dir.x, t), st.f[1].filter(found.dir.y, t), st.f[2].filter(found.dir.z, t)).normalize();
+        st.ang = st.fa.filter(found.ang, t);
+        this._bandStatus('Band erkannt');
+      } else if (++st.lost > 8) {
+        st.dir = null; st.prev = null; st.f.forEach((f) => f.reset()); st.fa.reset();
+        this._bandStatus('Kein Band im Bild');
+      }
     }
     if (!st.dir) { u.uBand.value = 0; return; }
     u.uBandDir.value.copy(st.dir);
@@ -591,7 +601,7 @@ export class Viewer {
       this._xrBind = this._xrBind || new XRWebGLBinding(session, gl);
       const tex = this._xrBind.getCameraImage(view.camera);
       if (!tex) return null;
-      const W = 160, H = Math.max(1, Math.round((160 * view.camera.height) / view.camera.width));
+      const W = 240, H = Math.max(1, Math.round((240 * view.camera.height) / view.camera.width));
       if (!this._ca || this._ca.H !== H) {
         const vs = '#version 300 es\nout vec2 uv;void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=p;gl_Position=vec4(p*2.0-1.0,0.0,1.0);}';
         const fs = '#version 300 es\nprecision mediump float;in vec2 uv;uniform sampler2D t;out vec4 o;void main(){o=texture(t,uv);}';

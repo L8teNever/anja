@@ -157,6 +157,25 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
   Unterschenkel, Brust, Kopf). Lila Punkte: Hand/Fuß ziehen – ganzer Arm/Bein folgt,
   Ellbogen/Knie – Knickrichtung. „Pose ▸“: Stehen, Arme hoch, T-Pose, Sitzen, Knien,
   Hocke, Liegen – danach frei anpassen.
+- **Zwei Modi:** „Spielen“ (Werkzeugleiste, am Handy das Gamepad-Symbol) und „Bauen“.
+  Im Bau-Modus wird alles hingestellt und verschoben wie oben. Im Spiel-Modus lässt sich
+  nichts mehr verschieben, dafür reagieren die Figuren:
+  - **Berühren:** Fingerspitzen und Handflächen (Hand-Tracking) bzw. die Controller sind
+    Kollider. Drückt man z. B. gegen den Kopf, gibt er nach, nimmt Hals und Oberkörper ein
+    Stück mit und federt zurück – jedes Gelenk hängt an einer gedämpften Feder.
+  - **Blick:** Die Figur schaut dich an (Kopf und Hals, bis 65°), außer im Liegen.
+  - **Rundes Menü:** Figur anklicken (Abzug, Pinch, am Handy tippen) – Hinsetzen, Hinlegen,
+    Hingehen, Zu mir, Aufstehen. Mit dem Finger antippen geht auch.
+  - **Platzfinder:** sucht in den erkannten Möbeln Sitzplätze (Fläche 28–80 cm hoch, an der
+    Kante, davor freier Boden für die Füße, keine Wand davor; je Stelle der Sitz mit dem
+    meisten Platz) und Liegeplätze (Bett oder große Fläche in Betthöhe). Sie erscheinen als
+    grüne/blaue Markierungen zum Auswählen; bei „Hingehen“ auf den Boden zielen
+    (grün = erreichbar, rot = nicht).
+  - **Laufen:** Weg über ein Laufraster (20 cm, Möbel und Wände mit Abstand gesperrt,
+    A* mit geglättetem Weg), berechneter Gang, am Ziel umdrehen und weich in die
+    Sitz-/Liegepose übergehen. Beim Sitzen stehen die Füße per IK auf dem Boden, beim
+    Liegen liegt sie längs auf dem Bett, Füße zu dir.
+  - „Flächen“ blendet die erkannten Möbel-Flächen ein.
 - **Eigene Modelle:** Tsunade und Miss White kamen ohne Skelett (statische T-Pose). Sie wurden
   mit `tools/autorig.js` auf Michelles Skelett geriggt: Körper vermessen, Gelenke an die
   passenden Stellen setzen, Hautgewichte von Michelle übertragen. Neue Modelle brauchen
@@ -240,6 +259,8 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/band.js` | Rotes Band im Kamerabild finden |
 | `public/room.js` | Raum-Modus: Würfel in der Durchsicht platzieren und greifen |
 | `public/room-surfaces.js` | Möbel-Flächen aus der Raumeinrichtung (Auflage, Platzfinder) |
+| `public/figure-motion.js` | Spiel-Modus: Berührungs-Physik, Blick, Laufen, Sitzen, Liegen |
+| `public/radial-menu.js` | Rundes Menü und Platz-Markierungen |
 | `public/figure.js` | Figur (3D-Modell) mit Gelenken, Posen und Zwei-Knochen-IK |
 | `public/models/` | 3D-Modell der Figur (GLB mit Mixamo-Skelett) |
 | `upload.js` | Hochladen in Stücken mit Fortsetzen (nginx-njs) |

@@ -23,6 +23,8 @@ const SHELL = [
   '/band.js',
   '/room.js',
   '/room-surfaces.js',
+  '/figure-motion.js',
+  '/radial-menu.js',
   '/figure.js',
   '/icons.js',
   '/vendor/three.module.min.js',

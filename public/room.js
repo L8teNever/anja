@@ -11,7 +11,9 @@
 // - Dauerhafter Raum-Anker (Quest): Objekte stehen nach Neustart/App-Update wieder am selben Platz.
 import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
-import { Surfaces } from '/room-surfaces.js';
+import { Surfaces, NavGrid, findSitSpots, findLieSpots } from '/room-surfaces.js';
+import { Motion } from '/figure-motion.js';
+import { RadialMenu, makeMarker } from '/radial-menu.js';
 import { Figure, MODELS, POSE_NAMES, loadFigureModel, modelInfo } from '/figure.js';
 
 const SIZE = 0.2;                       // Wuerfel-Kantenlaenge in Metern
@@ -20,6 +22,7 @@ const STORE = 'anja-room-items';
 const OLD_STORE = 'anja-room-cubes';
 const ANCHOR_KEY = 'anja-room-anchor';
 const MODEL_KEY = 'anja-room-model';
+const MODE_KEY = 'anja-room-mode';
 const TW = 900, STATUS_H = 46, ROW_H = 124, COLS = 4;
 const TOOLS = [
   { id: 'add', icon: 'add_box', label: 'Würfel +' },
@@ -28,9 +31,26 @@ const TOOLS = [
   { id: 'pose', icon: 'accessibility', label: 'Pose ▸' },
   { id: 'undo', icon: 'undo', label: 'Letztes weg' },
   { id: 'clear', icon: 'delete', label: 'Alle weg' },
+  { id: 'play', icon: 'sports_esports', label: 'Spielen' },
   { id: 'exit', icon: 'close', label: 'Beenden' },
 ];
+// Spiel-Modus: nichts mehr verschieben, dafuer mit den Figuren interagieren
+const PLAY_TOOLS = [
+  { id: 'build', icon: 'construction', label: 'Bauen' },
+  { id: 'show', icon: 'visibility', label: 'Flächen' },
+  { id: 'exit', icon: 'close', label: 'Beenden' },
+];
+const MENU = [
+  { id: 'sit', icon: 'event_seat', label: 'Hinsetzen' },
+  { id: 'lie', icon: 'hotel', label: 'Hinlegen' },
+  { id: 'walk', icon: 'directions_walk', label: 'Hingehen' },
+  { id: 'come', icon: 'emoji_people', label: 'Zu mir' },
+  { id: 'stand', icon: 'accessibility_new', label: 'Aufstehen' },
+];
 const TH = STATUS_H + Math.ceil(TOOLS.length / COLS) * ROW_H;
+// Kollider fuer die Beruehrungs-Physik: Fingerspitzen und Handflaeche
+const HAND_COLLIDERS = [['index-finger-tip', 0.012], ['middle-finger-tip', 0.012], ['ring-finger-tip', 0.012], ['pinky-finger-tip', 0.011],
+  ['thumb-tip', 0.013], ['middle-finger-metacarpal', 0.035], ['index-finger-phalanx-proximal', 0.018]];
 const UP = new THREE.Vector3(0, 1, 0);
 
 // Drehung, die den Wuerfel flach hinlegt: die am meisten senkrechte Achse auf "oben" drehen
@@ -72,6 +92,12 @@ export class Room {
     this.anchored = false;
     this.vel = new Map();               // Fallgeschwindigkeit je Objekt
     try { this.modelId = modelInfo(localStorage.getItem(MODEL_KEY)).id; } catch { this.modelId = MODELS[0].id; }
+    try { this.mode = localStorage.getItem(MODE_KEY) === 'play' ? 'play' : 'build'; } catch { this.mode = 'build'; }
+    this.prevCol = new Map();           // letzte Kollider-Positionen (fuer Geschwindigkeit)
+    this.menu = null; this.pick = null; // offenes Menue, laufende Zielauswahl
+    this.target = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.13, 40).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x7ee0b0, transparent: true, opacity: 0.9, depthTest: false }));
+    this.target.renderOrder = 15; this.target.visible = false;
     loadFigureModel(this.modelId).catch(() => {});  // 3D-Modell schon mal laden
 
     // Eingaben: Strahl (controller), Griff (grip), Hand (joints)
@@ -98,6 +124,7 @@ export class Room {
       new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }));
     this.reticle.matrixAutoUpdate = false; this.reticle.visible = false;
     this.scene.add(this.reticle);
+    this.scene.add(this.target);
 
     this.floorY = 0;                        // Bodenhoehe (local-floor: 0)
     this.surfaces = new Surfaces(this.scene);   // Moebel aus der Raumeinrichtung (nur als Auflage)
@@ -123,6 +150,33 @@ export class Room {
   get cubes() { return this.items.filter((o) => !o.isFigure); }
   get figures() { return this.items.filter((o) => o.isFigure); }
   get modelName() { return modelInfo(this.modelId).name; }
+  get tools() { return this.mode === 'play' ? PLAY_TOOLS : TOOLS; }
+
+  /* ---------- Modus: Bauen / Spielen ---------- */
+  setMode(m) {
+    if (m === this.mode) return;
+    this.mode = m;
+    try { localStorage.setItem(MODE_KEY, m); } catch {}
+    this.grabs.clear(); this._closeMenu(); this._endPick();
+    for (const f of this.figures) this._prepFigure(f);
+    this.note = m === 'play'
+      ? 'Spielen: Figur anklicken für das Menü · mit der Hand berühren'
+      : 'Bauen: Würfel und Figuren hinstellen und verschieben';
+    this._drawToolbar(); this.onModeChange?.(m);
+  }
+
+  // Figur fuer den aktuellen Modus einrichten
+  _prepFigure(f) {
+    if (this.mode === 'play') {
+      if (!f.motion) f.motion = new Motion(f); else f.motion.captureBase();
+      f.motion.state = /Liegen/.test(f.poseName) ? 'lie' : /Sitzen|Stuhl/.test(f.poseName) ? 'sit' : 'stand';
+      f.handleGroup.visible = false;
+    } else {
+      f.motion?.reset(); f.motion = null;
+      f.handleGroup.visible = true;
+      f.measureBottom();
+    }
+  }
 
   resize() {
     const w = this.container.clientWidth || innerWidth, h = this.container.clientHeight || innerHeight;
@@ -212,6 +266,7 @@ export class Room {
     if (joints) f.setJoints(joints);
     this.scene.add(f); this.items.push(f);
     f.measureBottom();
+    this._prepFigure(f);
     if (!silent) { f.updateMatrixWorld(true); f.ground(this._figSupport(f, pos.y + 0.1)); this._save(); }
     this.activeFigure = f;
     return f;
@@ -259,7 +314,7 @@ export class Room {
     this.vel.delete(old);
     this.scene.remove(old); old.dispose();
     this.items[this.items.indexOf(old)] = f;
-    this.scene.add(f); this.activeFigure = f;
+    this.scene.add(f); this.activeFigure = f; this._prepFigure(f);
     f.ground(this._figSupport(f, old.position.y + (old.bottom ?? 0) + 0.25));
     this.note = `Modell: ${MODELS[k].name}`;
     this._drawToolbar(); this._save();
@@ -289,7 +344,7 @@ export class Room {
       return { p: p.toArray(), q: q.toArray() };
     };
     const data = { v: 2, anchored: this.anchored, items: this.items.map((o) => (o.isFigure
-      ? { t: 'fig', ...loc(o), j: o.getJoints(), pose: o.poseName, m: o.modelId }
+      ? { t: 'fig', ...loc(o), j: o.motion ? Object.fromEntries(Object.entries(o.motion.base).map(([k, q]) => [k, q.toArray()])) : o.getJoints(), pose: o.poseName, m: o.modelId }
       : { t: 'cube', ...loc(o), c: o.userData.color })) };
     try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {}
   }
@@ -310,7 +365,7 @@ export class Room {
       const p = new THREE.Vector3(), q = new THREE.Quaternion(); m.decompose(p, q, new THREE.Vector3());
       if (o.t === 'fig') {
         const f = await this.addFigure(p, 0, o.j, true, o.m || 'michelle');
-        if (f) { f.quaternion.copy(q); f.poseName = o.pose || 'Stehen'; f.update(); f.measureBottom(); }
+        if (f) { f.quaternion.copy(q); f.poseName = o.pose || 'Stehen'; f.update(); f.measureBottom(); this._prepFigure(f); }
       } else this.addCube(p, q, o.c, true);
     }
     this._loading = false;
@@ -374,7 +429,7 @@ export class Room {
     const x = uv.x * TW, y = (1 - uv.y) * TH;
     if (y < STATUS_H) return null;
     const k = Math.floor((y - STATUS_H) / ROW_H) * COLS + Math.floor(x / (TW / COLS));
-    return TOOLS[k]?.id || null;
+    return this.tools[k]?.id || null;
   }
 
   _press(i, kind) {
@@ -385,6 +440,7 @@ export class Room {
       const h = this._rayHit(inp, [this.toolbar]);
       if (h) { const id = this._toolAt(h.uv); if (id) this._tool(id); return; }
     }
+    if (this.mode === 'play') { if (kind === 'select') this._pressPlay(inp); return; }
     // 2) nah greifen
     const pt = this._point(inp);
     if (pt) {
@@ -427,6 +483,234 @@ export class Room {
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(inp.ray.matrixWorld));
       this.addCube(pt.hand ? pt.pos.clone() : pt.pos.clone().addScaledVector(fwd, 0.35));
     } else if (this.phone) this.addInFront();
+  }
+
+  /* ---------- Spiel-Modus ---------- */
+  _viewer() { return new THREE.Vector3().setFromMatrixPosition(this.renderer.xr.getCamera().matrixWorld); }
+
+  _pressPlay(inp) {
+    this._rayHit(inp, []);
+    const rc = this.raycaster;
+    // offenes Menue
+    if (this.menu) {
+      const b = this.menu.pick(rc);
+      if (b) this._menuAction(b.userData.item.id);
+      else this._closeMenu();
+      return;
+    }
+    // Ziel waehlen (Sitz-/Liegeplatz oder Punkt am Boden)
+    if (this.pick) {
+      if (this.pick.kind === 'walk') {
+        const p = this._floorHit(rc.ray);
+        if (p && this.pick.grid.isFree(p.x, p.z)) this._goWalk(this.pick.fig, p, this.pick.grid);
+        else { this.note = 'Dort kann sie nicht hin'; this._drawToolbar(); }
+        this._endPick(); return;
+      }
+      const hit = rc.intersectObjects(this.pick.markers.flatMap((m) => m.userData.pickables), false)[0];
+      if (hit) {
+        const m = this.pick.markers.find((k) => k.userData.pickables.includes(hit.object));
+        const { fig, kind, grid } = this.pick;
+        this._endPick();
+        if (kind === 'sit') this._goSit(fig, m.userData.spot, grid); else this._goLie(fig, m.userData.spot, grid);
+      } else { this._endPick(); this.note = ''; this._drawToolbar(); }
+      return;
+    }
+    // Figur angeklickt -> Menue
+    const parts = this.figures.flatMap((f) => f.parts);
+    const hit = rc.intersectObjects(parts, false)[0];
+    if (hit) this._openMenu(this._figOf(hit.object), hit.point);
+  }
+
+  _floorHit(ray) {
+    if (ray.direction.y > -0.05) return null;
+    const t = (this.floorY - ray.origin.y) / ray.direction.y;
+    return t > 0 && t < 8 ? ray.origin.clone().addScaledVector(ray.direction, t) : null;
+  }
+
+  _openMenu(fig, at) {
+    this._closeMenu();
+    this.menu = new RadialMenu(MENU);
+    this.menu.fig = fig;
+    const v = this._viewer();
+    const chest = fig.j.chest.getWorldPosition(new THREE.Vector3());
+    const p = (at || chest).clone();
+    p.addScaledVector(v.clone().sub(p).normalize(), 0.25);           // etwas vor die Figur, Richtung Spieler
+    p.y = Math.max(p.y, this.floorY + 0.5);
+    this.menu.position.copy(p);
+    this.scene.add(this.menu);
+    this.note = ''; this._drawToolbar();
+  }
+
+  _closeMenu() { if (this.menu) { this.scene.remove(this.menu); this.menu.dispose(); this.menu = null; } }
+
+  _endPick() {
+    if (this.pick?.markers) for (const m of this.pick.markers) { this.scene.remove(m); m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); }); }
+    this.pick = null; this.target.visible = false;
+  }
+
+  _grid(fig) {
+    const p = fig.j.root.getWorldPosition(new THREE.Vector3()), v = this._viewer();
+    return new NavGrid(this.surfaces, this.floorY, (p.x + v.x) / 2, (p.z + v.z) / 2, 5, 0.2);
+  }
+
+  _menuAction(id) {
+    const fig = this.menu?.fig;
+    this._closeMenu();
+    if (!fig || id === 'close') return;
+    const grid = this._grid(fig);
+    if (id === 'sit' || id === 'lie') {
+      const spots = id === 'sit' ? findSitSpots(this.surfaces, this.floorY, grid) : findLieSpots(this.surfaces, this.floorY);
+      if (!spots.length) {
+        this.note = this.surfaces.count ? `Kein ${id === 'sit' ? 'Sitz' : 'Liege'}platz gefunden` : 'Keine Möbel erkannt – Raum in der Quest einrichten';
+        this._drawToolbar(); return;
+      }
+      const markers = spots.map((sp) => {
+        const m = makeMarker(id);
+        m.position.copy(id === 'sit' ? sp.seat : sp.center); m.position.y += 0.01;
+        m.userData.spot = sp; this.scene.add(m); return m;
+      });
+      this.pick = { kind: id, fig, grid, markers };
+      this.note = id === 'sit' ? 'Sitzplatz auswählen' : 'Liegeplatz auswählen'; this._drawToolbar();
+    } else if (id === 'walk') {
+      this.pick = { kind: 'walk', fig, grid, markers: [] };
+      this.note = 'Auf den Boden zielen und drücken'; this._drawToolbar();
+    } else if (id === 'come') {
+      const v = this._viewer();
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.renderer.xr.getCamera().quaternion); fwd.y = 0;
+      if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
+      fwd.normalize();
+      const goal = grid.nearestFree(v.x + fwd.x * 0.9, v.z + fwd.z * 0.9);
+      if (!goal) { this.note = 'Kein Platz vor dir'; this._drawToolbar(); return; }
+      this._goWalk(fig, new THREE.Vector3(goal[0], this.floorY, goal[1]), grid, true);
+    } else if (id === 'stand') {
+      fig.motion.clearTasks(); this._standUp(fig, grid); fig.motion.call(() => this._save());
+    }
+  }
+
+  // erst aufstehen, falls sie sitzt oder liegt
+  _standUp(fig, grid) {
+    const mo = fig.motion;
+    if (mo.state === 'stand') return;
+    const yaw = new THREE.Euler().setFromQuaternion(fig.quaternion, 'YXZ').y;
+    mo.blend(() => {
+      let x, z;
+      if (mo.spot?.approach) ({ x, z } = mo.spot.approach);
+      else {
+        const p = fig.j.root.getWorldPosition(new THREE.Vector3()), v = this._viewer();
+        const g = grid.nearestFree(p.x + (v.x - p.x) * 0.3, p.z + (v.z - p.z) * 0.3) || [p.x, p.z];
+        [x, z] = g;
+      }
+      const lyaw = mo.state === 'lie' ? Math.atan2(this._viewer().x - x, this._viewer().z - z) : yaw;
+      return mo.solveStand(x, z, lyaw, this.floorY);
+    }, 0.9, () => { mo.state = 'stand'; mo.spot = null; });
+  }
+
+  _walkTo(fig, x, z, grid) {
+    const fail = () => { this.note = 'Kein Weg dorthin gefunden'; this._drawToolbar(); };
+    fig.motion.walk(() => grid.path([fig.position.x, fig.position.z], [x, z]), this.floorY, fail);
+  }
+
+  _goWalk(fig, p, grid, faceViewer = false) {
+    const mo = fig.motion;
+    mo.clearTasks(); this._standUp(fig, grid);
+    this._walkTo(fig, p.x, p.z, grid);
+    if (faceViewer) mo.call(() => { const v = this._viewer(); mo.turn(Math.atan2(v.x - fig.position.x, v.z - fig.position.z)); });
+    mo.call(() => this._save());
+    this.note = ''; this._drawToolbar();
+  }
+
+  _goSit(fig, spot, grid) {
+    const mo = fig.motion;
+    mo.clearTasks(); this._standUp(fig, grid);
+    this._walkTo(fig, spot.approach.x, spot.approach.z, grid);
+    mo.turn(Math.atan2(spot.dir[0], spot.dir[1]));
+    mo.blend(() => mo.solveSit(spot, this.floorY), 0.9, () => { mo.state = 'sit'; mo.spot = spot; this._save(); });
+    this.note = ''; this._drawToolbar();
+  }
+
+  _goLie(fig, spot, grid) {
+    const mo = fig.motion;
+    mo.clearTasks(); this._standUp(fig, grid);
+    // an die Bettseite, die der Figur am naechsten ist
+    const p = fig.position, c = spot.center;
+    const side = [-spot.axis[1], spot.axis[0]];
+    const sgn = Math.sign((p.x - c.x) * side[0] + (p.z - c.z) * side[1]) || 1;
+    const ax = c.x + side[0] * sgn * (spot.wid / 2 + 0.45), az = c.z + side[1] * sgn * (spot.wid / 2 + 0.45);
+    const g = grid.nearestFree(ax, az) || [ax, az];
+    this._walkTo(fig, g[0], g[1], grid);
+    mo.call(() => mo.turn(Math.atan2(c.x - fig.position.x, c.z - fig.position.z)));
+    mo.blend(() => mo.solveLie(spot, this._viewer()), 1.3, () => {
+      mo.state = 'lie'; mo.spot = { approach: new THREE.Vector3(g[0], this.floorY, g[1]) }; this._save();
+    });
+    this.note = ''; this._drawToolbar();
+  }
+
+  // Kollider aus Haenden und Controllern (Welt), mit Geschwindigkeit
+  _colliders(dt) {
+    const out = [], seen = new Set();
+    const add = (key, p, r) => {
+      const prev = this.prevCol.get(key);
+      const v = prev && dt > 0 ? p.clone().sub(prev).divideScalar(dt) : new THREE.Vector3();
+      if (v.length() > 6) v.setLength(6);
+      this.prevCol.set(key, p.clone()); seen.add(key);
+      out.push({ p, v, r });
+    };
+    for (const inp of this.inputs) {
+      if (!inp.mode) continue;
+      const j = inp.hand.joints;
+      if (j && j['index-finger-tip']?.visible) {
+        for (const [name, r] of HAND_COLLIDERS) if (j[name]) add(`${inp.i}:${name}`, j[name].getWorldPosition(new THREE.Vector3()), r);
+      } else if (inp.mode === 'tracked-pointer' && inp.grip.visible) {
+        add(`${inp.i}:grip`, inp.grip.getWorldPosition(new THREE.Vector3()), 0.04);
+      }
+    }
+    for (const k of [...this.prevCol.keys()]) if (!seen.has(k)) this.prevCol.delete(k);
+    return out;
+  }
+
+  // pro Frame im Spiel-Modus
+  _framePlay(dt) {
+    const viewer = this._viewer();
+    const cols = this._colliders(dt);
+    for (const f of this.figures) f.motion?.update(dt, cols, viewer);
+    // Menue: zum Spieler drehen, mit dem Finger antippen, Hervorheben
+    const hot = new Set();
+    if (this.menu) {
+      this.menu.face(viewer);
+      for (const inp of this.inputs) {
+        if (!inp.mode) continue;
+        const tip = inp.hand.joints?.['index-finger-tip'];
+        if (tip?.visible) {
+          const b = this.menu.poke(tip.getWorldPosition(new THREE.Vector3()));
+          if (b && !inp.poked) { inp.poked = true; this._menuAction(b.userData.item.id); break; }
+          if (!b) inp.poked = false;
+          if (b) hot.add(b);
+        }
+        this._rayHit(inp, []);
+        const b = this.menu?.pick(this.raycaster); if (b) hot.add(b);
+      }
+      this.menu?.setHot(hot);
+    }
+    // Ziel am Boden anzeigen (Hingehen)
+    if (this.pick?.kind === 'walk') {
+      let shown = false;
+      for (const inp of this.inputs) {
+        if (!inp.mode) continue;
+        this._rayHit(inp, []);
+        const p = this._floorHit(this.raycaster.ray);
+        if (p) {
+          this.target.position.set(p.x, this.floorY + 0.01, p.z);
+          this.target.material.color.setHex(this.pick.grid.isFree(p.x, p.z) ? 0x7ee0b0 : 0xff7a8a);
+          shown = true; break;
+        }
+      }
+      this.target.visible = shown;
+    }
+    // Markierungen leicht pulsieren lassen
+    if (this.pick?.markers) {
+      const k = 1 + 0.08 * Math.sin(performance.now() / 180);
+      for (const m of this.pick.markers) m.scale.setScalar(k);
+    }
   }
 
   _figOf(o) { let p = o; while (p && !p.isFigure) p = p.parent; return p; }
@@ -513,7 +797,7 @@ export class Room {
   _gravity(dt) {
     const held = new Set([...this.grabs.values()].map((g) => g.fig || g.obj));
     for (const o of this.items) {
-      if (held.has(o) || this.settling.has(o)) continue;
+      if (held.has(o) || this.settling.has(o) || o.motion) continue;
       const fig = o.isFigure;
       const bottom = fig ? o.position.y + (o.bottom ?? 0) : o.position.y - halfHeight(o.quaternion);
       const support = fig ? this._figSupport(o, bottom + 0.06) : this._support(o);
@@ -544,6 +828,9 @@ export class Room {
       });
     } else if (id === 'pose') this.nextPose();
     else if (id === 'model') this.nextModel();
+    else if (id === 'play') this.setMode('play');
+    else if (id === 'build') this.setMode('build');
+    else if (id === 'show') { this.surfaces.setShow(!this.surfaces.group.visible); this.note = this.surfaces.group.visible ? `${this.surfaces.count} Möbel-Flächen eingeblendet` : ''; this._drawToolbar(); }
     else if (id === 'undo') this.undo();
     else if (id === 'clear') this.clear();
     else if (id === 'exit') this.end();
@@ -568,16 +855,18 @@ export class Room {
   }
 
   _drawToolbar() {
+    if (this.phone && this.note && this.note !== this._lastNote) this.onNote?.(this.note);   // Handy: als Hinweis
+    this._lastNote = this.note;
     const ctx = this.tcanvas.getContext('2d');
     ctx.clearRect(0, 0, TW, TH);
-    const status = this.note || `Pinch/Abzug ins Leere: Würfel · ${this.surfaces.count ? `${this.surfaces.count} Möbel-Flächen erkannt` : 'nur Boden erkannt'}${this.anchored ? ' · Plätze werden gemerkt' : ''}`;
+    const status = this.note || (this.mode === 'play' ? 'Spielen: Figur anklicken für das Menü · mit der Hand berühren' : '') || `Pinch/Abzug ins Leere: Würfel · ${this.surfaces.count ? `${this.surfaces.count} Möbel-Flächen erkannt` : 'nur Boden erkannt'}${this.anchored ? ' · Plätze werden gemerkt' : ''}`;
     ctx.font = '500 22px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const sw = Math.min(TW - 16, ctx.measureText(status).width + 36);
     ctx.fillStyle = 'rgba(22,19,31,0.85)';
     ctx.beginPath(); ctx.roundRect ? ctx.roundRect((TW - sw) / 2, 3, sw, 38, 19) : ctx.rect((TW - sw) / 2, 3, sw, 38); ctx.fill();
     ctx.fillStyle = '#f1edf9'; ctx.fillText(status, TW / 2, 22);
     const w = TW / COLS;
-    TOOLS.forEach((t, k) => {
+    this.tools.forEach((t, k) => {
       const x = (k % COLS) * w, y = STATUS_H + Math.floor(k / COLS) * ROW_H;
       const on = this.toolHover === t.id;
       ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x + 6, y + 4, w - 12, ROW_H - 10, 26) : ctx.rect(x + 6, y + 4, w - 12, ROW_H - 10);
@@ -660,6 +949,7 @@ export class Room {
     const now = performance.now();
     const dt = Math.min(0.05, (now - (this._lastT || now)) / 1000); this._lastT = now;
     this._gravity(dt);
+    if (this.mode === 'play') this._framePlay(dt);
     // sanft flach anlegen (auf Boden oder Wuerfel)
     for (const [c, a] of this.settling) {
       const k = Math.min(1, (now - a.t0) / 180);
@@ -674,7 +964,7 @@ export class Room {
     const handles = this.figures.flatMap((f) => f.handles), parts = this.figures.flatMap((f) => f.parts);
     for (const inp of this.inputs) {
       if (!inp.mode) continue;
-      const pt = this._point(inp);
+      const pt = this.mode === 'build' && this._point(inp);
       const nt = pt && this._nearTarget(pt.pos, pt.hand);
       if (nt) { if (nt.kind === 'handle') hotHandles.add(nt.handle); else hot.add(nt.fig || nt.obj); }
       if (this.toolbar.visible) {
@@ -682,8 +972,11 @@ export class Room {
         if (h) hoverTool = this._toolAt(h.uv);
       }
       if (inp.line.visible) {
-        const h = this._rayHit(inp, [...handles, ...parts, ...this.cubes, ...(this.toolbar.visible ? [this.toolbar] : [])]);
-        inp.line.scale.z = h ? h.distance : 0.6;
+        const play = this.mode === 'play';
+        const extra = play ? [...(this.menu ? this.menu.buttons : []), ...(this.pick?.markers || []).flatMap((m) => m.userData.pickables)] : [];
+        const h = this._rayHit(inp, [...(play ? [] : handles), ...parts, ...(play ? [] : this.cubes), ...extra, ...(this.toolbar.visible ? [this.toolbar] : [])]);
+        inp.line.scale.z = h ? h.distance : (this.pick?.kind === 'walk' ? 4 : 0.6);
+        if (h && extra.includes(h.object)) continue;
         if (h && h.object !== this.toolbar) {
           if (h.object.userData.handle) hotHandles.add(h.object);
           else hot.add(parts.includes(h.object) ? this._figOf(h.object) : h.object);

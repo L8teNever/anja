@@ -46,6 +46,8 @@ export const POSES = {
   'T-Pose': { ...LEGS_STRAIGHT, lShoulder: D(1, 0, 0), lElbow: D(1, 0, 0), rShoulder: D(-1, 0, 0), rElbow: D(-1, 0, 0) },
   Sitzen: { lHip: D(0.08, 0, 1), lKnee: D(0.05, 0, 1), rHip: D(-0.08, 0, 1), rKnee: D(-0.05, 0, 1),
     lShoulder: D(0.25, -1, -0.35), lElbow: D(0.15, -1, -0.3), rShoulder: D(-0.25, -1, -0.35), rElbow: D(-0.15, -1, -0.3) },
+  Stuhl: { lHip: D(0.1, -0.05, 1), lKnee: D(0.06, -1, 0.08), rHip: D(-0.1, -0.05, 1), rKnee: D(-0.06, -1, 0.08),
+    lShoulder: D(0.12, -1, 0.3), lElbow: D(0.08, -0.35, 1), rShoulder: D(-0.12, -1, 0.3), rElbow: D(-0.08, -0.35, 1) },
   Knien: { lHip: D(0.05, -1, 0.05), lKnee: D(0, -0.05, -1), rHip: D(-0.05, -1, 0.05), rKnee: D(0, -0.05, -1), ...ARMS_DOWN },
   Hocke: { lHip: D(0.3, -0.1, 1), lKnee: D(0.05, -1, -0.3), rHip: D(-0.3, -0.1, 1), rKnee: D(-0.05, -1, -0.3),
     chest: D(0, 1, 0.35), lShoulder: D(0.15, -0.25, 1), lElbow: D(0.1, -0.2, 1), rShoulder: D(-0.15, -0.25, 1), rElbow: D(-0.1, -0.2, 1) },
@@ -104,6 +106,11 @@ export class Figure extends THREE.Group {
     for (const s of ['l', 'r']) { grip(`${s}Hand`, 'ikArm'); grip(`${s}Elbow`, 'elbow'); grip(`${s}Foot`, 'ikLeg'); grip(`${s}Knee`, 'knee'); }
     grip('head', 'head'); grip('chest', 'chest');
     this.setPose('Stehen');
+    // Gesicht zeigt in der Grundpose nach vorne (+Z der Figur): im Kopf-Raum merken
+    this.faceLocal = new THREE.Vector3(0, 0, 1).applyQuaternion(this.j.head.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(this._fq()));
+    // Hoehe der Fussgelenke ueber der Sohle (zum Aufsetzen beim Laufen)
+    this.measureBottom();
+    this.ankleH = Math.min(this._wp(this.j.lAnkle).y, this._wp(this.j.rAnkle).y) - (this.position.y + this.bottom);
   }
 
   /* ---------- Grundlagen ---------- */
@@ -130,8 +137,10 @@ export class Figure extends THREE.Group {
   }
 
   /* ---------- Posen ---------- */
-  setPose(name) {
-    const p = POSES[name] || POSES.Stehen;
+  setPose(name) { this.setPoseDirs(POSES[name] || POSES.Stehen, POSES[name] ? name : 'Stehen'); }
+
+  // Pose aus Richtungen je Gelenk (wie in POSES), z. B. fuer berechnete Gang-Posen
+  setPoseDirs(p, name = 'Eigene') {
     for (const [k, q] of Object.entries(this.rest)) this.j[k].quaternion.copy(q);
     this.j.root.position.copy(this.restRootPos);
     this.updateMatrixWorld(true);
@@ -148,6 +157,9 @@ export class Figure extends THREE.Group {
     this.updateMatrixWorld(true);
     this.update();
   }
+
+  // Blickrichtung des Gesichts (Welt), aus der Kopfdrehung
+  faceDir() { return this.faceLocal.clone().applyQuaternion(this.j.head.getWorldQuaternion(new THREE.Quaternion())); }
 
   getJoints() { const o = {}; for (const [k, j] of Object.entries(this.j)) o[k] = j.quaternion.toArray(); return o; }
   setJoints(o) {
@@ -240,8 +252,24 @@ export class Figure extends THREE.Group {
       m.computeBoundingBox();
       box.union(m.boundingBox.clone().applyMatrix4(m.matrixWorld));
     }
+    this.box = box;
     this.bottom = box.min.y - this.position.y;
     return this.bottom;
+  }
+
+  // tiefster Hautpunkt (Welt-y), der eine Bedingung erfuellt (z. B. nur Gesaess beim Sitzen)
+  lowestWhere(pred, step = 3) {
+    this.updateMatrixWorld(true);
+    const v = new THREE.Vector3();
+    let y = Infinity;
+    for (const m of this.parts) {
+      const n = m.geometry.attributes.position.count;
+      for (let i = 0; i < n; i += step) {
+        m.getVertexPosition(i, v); v.applyMatrix4(m.matrixWorld);
+        if (v.y < y && pred(v)) y = v.y;
+      }
+    }
+    return y;
   }
 
   ground(floorY = 0) { this.measureBottom(); this.position.y = floorY - this.bottom; this.updateMatrixWorld(true); this.update(); }

@@ -171,3 +171,161 @@ export class Surfaces {
     }
   }
 }
+
+/* ---------- Platzfinder ---------- */
+const SEAT_MIN = 0.28, SEAT_MAX = 0.8;     // Sitzhoehe ueber dem Boden
+const LIE_MIN = 0.15, LIE_MAX = 0.9;
+
+// Hauptachse eines Polygons (PCA): { center, axis:[x,z], len, wid }
+function principal(poly) {
+  const n = poly.length;
+  const cx = poly.reduce((s, p) => s + p[0], 0) / n, cz = poly.reduce((s, p) => s + p[1], 0) / n;
+  let xx = 0, xz = 0, zz = 0;
+  for (const [x, z] of poly) { xx += (x - cx) ** 2; xz += (x - cx) * (z - cz); zz += (z - cz) ** 2; }
+  const a = 0.5 * Math.atan2(2 * xz, xx - zz);
+  const ax = [Math.cos(a), Math.sin(a)], bx = [-ax[1], ax[0]];
+  let l0 = Infinity, l1 = -Infinity, w0 = Infinity, w1 = -Infinity;
+  for (const [x, z] of poly) {
+    const u = (x - cx) * ax[0] + (z - cz) * ax[1], v = (x - cx) * bx[0] + (z - cz) * bx[1];
+    l0 = Math.min(l0, u); l1 = Math.max(l1, u); w0 = Math.min(w0, v); w1 = Math.max(w1, v);
+  }
+  const c = [cx + ax[0] * (l0 + l1) / 2 + bx[0] * (w0 + w1) / 2, cz + ax[1] * (l0 + l1) / 2 + bx[1] * (w0 + w1) / 2];
+  return l1 - l0 >= w1 - w0 ? { center: c, axis: ax, len: l1 - l0, wid: w1 - w0 } : { center: c, axis: bx, len: w1 - w0, wid: l1 - l0 };
+}
+
+// Sitzplaetze: Kante einer Flaeche in Sitzhoehe, davor freier Boden fuer die Fuesse
+// -> [{ seat: Vector3 (Sitzpunkt), dir: [x,z] (Blickrichtung nach aussen), approach: Vector3, s }]
+export function findSitSpots(surfaces, floorY, grid) {
+  const out = [], cand = [];
+  for (const s of surfaces.list) {
+    const h = s.y - floorY;
+    if (h < SEAT_MIN || h > SEAT_MAX || s.label === 'table' || s.area < 0.12) continue;
+    const [cx, cz] = s.center;
+    for (let i = 0, j = s.poly.length - 1; i < s.poly.length; j = i++) {
+      const [ax, az] = s.poly[j], [bx, bz] = s.poly[i];
+      const len = Math.hypot(bx - ax, bz - az);
+      if (len < 0.4) continue;
+      let nx = (bz - az) / len, nz = -(bx - ax) / len;                 // Normale der Kante
+      const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+      if (nx * (mx - cx) + nz * (mz - cz) < 0) { nx = -nx; nz = -nz; }  // nach aussen
+      const k = Math.max(1, Math.floor((len - 0.2) / 0.6));
+      for (let q = 0; q < k; q++) {
+        const t = (q + 0.5) / k;
+        const ex = ax + (bx - ax) * t, ez = az + (bz - az) * t;
+        const seat = new THREE.Vector3(ex - nx * 0.14, s.y, ez - nz * 0.14);
+        const approach = new THREE.Vector3(ex + nx * 0.5, floorY, ez + nz * 0.5);
+        if (grid && !grid.isFree(approach.x, approach.z)) continue;
+        if (surfaces.supportAt(ex + nx * 0.3, ez + nz * 0.3, s.y + 0.5) !== null) continue;   // davor steht etwas
+        if (surfaces.walls.some((w) => crosses([ex, ez], [approach.x, approach.z], w[0], w[1]))) continue;   // Wand davor
+        // Platz vor dem Sitz: freie Rasterzellen bis 1,2 m
+        let score = 0;
+        if (grid) for (let d = 0.3; d <= 1.2; d += 0.1) { if (grid.isFree(ex + nx * d, ez + nz * d)) score++; else break; }
+        cand.push({ seat, dir: [nx, nz], approach, s, score });
+      }
+    }
+  }
+  // je Stelle der Sitz mit dem meisten Platz davor
+  cand.sort((a, b) => b.score - a.score);
+  for (const c of cand) if (!out.some((o) => o.seat.distanceTo(c.seat) < 0.45)) out.push(c);
+  return out;
+}
+
+// schneiden sich die Strecken a-b und c-d (xz)?
+function crosses(a, b, c, d) {
+  const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
+  return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b);
+}
+
+// Liegeplaetze: Bett oder grosse Flaeche in Bett-Hoehe -> [{ center: Vector3, axis:[x,z], len, wid, s }]
+export function findLieSpots(surfaces, floorY) {
+  const out = [];
+  for (const s of surfaces.list) {
+    const h = s.y - floorY;
+    if (h < LIE_MIN || h > LIE_MAX || s.label === 'table') continue;
+    const pa = principal(s.poly);
+    if (!(s.label === 'bed' || (pa.len >= 1.5 && pa.wid >= 0.7))) continue;
+    if (pa.len < 1.2) continue;
+    out.push({ center: new THREE.Vector3(pa.center[0], s.y, pa.center[1]), axis: pa.axis, len: pa.len, wid: pa.wid, s });
+  }
+  return out;
+}
+
+/* ---------- Laufraster (A*) ---------- */
+export class NavGrid {
+  constructor(surfaces, floorY, cx, cz, radius = 5, cell = 0.2) {
+    this.cell = cell; this.n = Math.ceil((2 * radius) / cell);
+    this.x0 = cx - radius; this.z0 = cz - radius;
+    this.free = new Uint8Array(this.n * this.n);
+    for (let i = 0; i < this.n; i++) for (let k = 0; k < this.n; k++) {
+      const [x, z] = this.pos(i, k);
+      this.free[k * this.n + i] = surfaces.blocked(x, z, floorY, 0.22) ? 0 : 1;
+    }
+  }
+
+  pos(i, k) { return [this.x0 + (i + 0.5) * this.cell, this.z0 + (k + 0.5) * this.cell]; }
+  idx(x, z) { return [Math.floor((x - this.x0) / this.cell), Math.floor((z - this.z0) / this.cell)]; }
+  inside(i, k) { return i >= 0 && k >= 0 && i < this.n && k < this.n; }
+  isFreeCell(i, k) { return this.inside(i, k) && this.free[k * this.n + i] === 1; }
+  isFree(x, z) { const [i, k] = this.idx(x, z); return this.isFreeCell(i, k); }
+
+  // naechste freie Zelle (Breitensuche nach aussen)
+  nearestFree(x, z) {
+    const [i0, k0] = this.idx(x, z);
+    for (let r = 0; r < this.n; r++) {
+      let best = null, bd = Infinity;
+      for (let i = i0 - r; i <= i0 + r; i++) for (let k = k0 - r; k <= k0 + r; k++) {
+        if (Math.max(Math.abs(i - i0), Math.abs(k - k0)) !== r || !this.isFreeCell(i, k)) continue;
+        const [px, pz] = this.pos(i, k), d = (px - x) ** 2 + (pz - z) ** 2;
+        if (d < bd) { bd = d; best = [px, pz]; }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+
+  // freie Sichtlinie (fuer das Glaetten des Wegs)
+  clear(ax, az, bx, bz) {
+    const d = Math.hypot(bx - ax, bz - az), steps = Math.ceil(d / (this.cell * 0.5));
+    for (let s = 0; s <= steps; s++) { const t = s / (steps || 1); if (!this.isFree(ax + (bx - ax) * t, az + (bz - az) * t)) return false; }
+    return true;
+  }
+
+  // Weg von a nach b ([x,z]) -> Liste von Punkten [x,z] oder null
+  path(a, b) {
+    const s = this.nearestFree(a[0], a[1]), g = this.nearestFree(b[0], b[1]);
+    if (!s || !g) return null;
+    const [si, sk] = this.idx(...s), [gi, gk] = this.idx(...g), n = this.n;
+    const start = sk * n + si, goal = gk * n + gi;
+    const gs = new Float32Array(n * n).fill(Infinity), from = new Int32Array(n * n).fill(-1), done = new Uint8Array(n * n);
+    const open = [[0, start]]; gs[start] = 0;
+    const hh = (c) => Math.hypot((c % n) - gi, Math.floor(c / n) - gk);
+    while (open.length) {
+      let bi = 0; for (let q = 1; q < open.length; q++) if (open[q][0] < open[bi][0]) bi = q;
+      const [, c] = open.splice(bi, 1)[0];
+      if (c === goal) break;
+      if (done[c]) continue; done[c] = 1;
+      const ci = c % n, ck = Math.floor(c / n);
+      for (let di = -1; di <= 1; di++) for (let dk = -1; dk <= 1; dk++) {
+        if (!di && !dk) continue;
+        const ni = ci + di, nk = ck + dk;
+        if (!this.isFreeCell(ni, nk) || (di && dk && (!this.isFreeCell(ci + di, ck) || !this.isFreeCell(ci, ck + dk)))) continue;
+        const nc = nk * n + ni, ng = gs[c] + (di && dk ? Math.SQRT2 : 1);
+        if (ng < gs[nc]) { gs[nc] = ng; from[nc] = c; open.push([ng + hh(nc), nc]); }
+      }
+    }
+    if (start !== goal && from[goal] < 0) return null;
+    const cells = [];
+    for (let c = goal; c >= 0; c = c === start ? -1 : from[c]) cells.unshift(this.pos(c % n, Math.floor(c / n)));
+    cells[0] = [a[0], a[1]];
+    if (this.isFree(b[0], b[1])) cells.push([b[0], b[1]]);
+    // glaetten: Punkte weglassen, solange die Sichtlinie frei ist
+    const out = [cells[0]];
+    let k = 0;
+    while (k < cells.length - 1) {
+      let j = cells.length - 1;
+      while (j > k + 1 && !this.clear(cells[k][0], cells[k][1], cells[j][0], cells[j][1])) j--;
+      out.push(cells[j]); k = j;
+    }
+    return out;
+  }
+}

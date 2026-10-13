@@ -1,4 +1,7 @@
-# Lara – Bowling in Mixed Reality
+# Isabella – Bowling in Mixed Reality
+
+Läuft unter **https://isabella.kulbarts.com**. (Ordner und Image heißen aus historischen Gründen
+`lara/` bzw. `lara-bowling`.)
 
 Eigene Website (unabhängig von Anja): Kegel in den echten Raum stellen und mit der Hand oder dem
 Controller bowlen – auf der Meta Quest im Passthrough, am Android-Handy in AR, sonst in VR oder am

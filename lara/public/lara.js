@@ -1,4 +1,4 @@
-// Lara – Bowling in Mixed Reality.
+// Isabella – Bowling in Mixed Reality (Ordner lara/).
 // Brille (WebXR immersive-ar, Quest): Kegel per Strahl auf den echten Boden stellen, Kugel mit der Hand
 // (Pinch) oder dem Controller (Grifftaste/Abzug) greifen und werfen – die Wurfgeschwindigkeit kommt aus der
 // Handbewegung. Handy (AR): Kegel auf den erkannten Boden tippen, Kugel per Wischen rollen.

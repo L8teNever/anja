@@ -1,7 +1,7 @@
 # Anja – 360°-Videos im Browser, auch offline
 
-> Im Ordner [`lara/`](lara/README.md) liegt eine zweite, getrennte Website: **Lara** – Bowling in Mixed Reality
-> (eigenes Docker-Image `ghcr.io/l8tenever/lara-bowling`).
+> Im Ordner [`lara/`](lara/README.md) liegt eine zweite, getrennte Website: **Isabella** – Bowling in Mixed Reality
+> (https://isabella.kulbarts.com, eigenes Docker-Image `ghcr.io/l8tenever/lara-bowling`).
 
 Kleine Web-App in einem Docker-Container: zeigt 360°-Videos (equirektangular) im Browser an –
 per Ziehen, Bewegungssensor am Handy oder mit VR-Brille (WebXR). Jedes Video lässt sich per

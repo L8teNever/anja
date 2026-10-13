@@ -26,6 +26,10 @@ der etwas unter `lara/` ändert (`.github/workflows/lara.yml`).
 - **Handy:** auf den Boden tippen zum Aufstellen, dann nach oben wischen – je schneller, desto
   schneller die Kugel, seitlich wischen lenkt.
 - **Bildschirm:** mit der Maus nach oben wischen.
+- **Mehrere Spieler mit einem Gerät:** auf der Startseite Namen eintragen (bis 8). Jeder spielt
+  einen ganzen Frame, dann ist der Nächste dran – Brille oder Handy einfach weitergeben. Die Tafel
+  zeigt alle Spieler, wer dran ist, und am Ende den Sieger. Namen werden gemerkt.
+- Gespielt wird in jedem Raum mit etwas freiem Boden – die Kegel stehen dort, wo man sie hinstellt.
 - Werkzeugleiste (Brille, schwebt unten): Kegel hier, Neu aufstellen, Neues Spiel, Kugel holen,
   Beenden. Die Kugel schwebt nach jedem Wurf wieder rechts vor dir.
 
@@ -35,7 +39,7 @@ der etwas unter `lara/` ändert (`.github/workflows/lara.yml`).
 |---|---|
 | `public/lara.js` | Start, WebXR, Eingaben (Hände, Controller, Wischen), Werkzeugleiste, Ablauf |
 | `public/bowling.js` | Physik (cannon-es): Kugel 6 kg/21,6 cm, Kegel 1,55 kg/38 cm aus 5 Formen, Erkennen umgefallener Kegel |
-| `public/score.js` | Bowling-Wertung (Strike, Spare, 10. Frame) und Anzeigetafel |
+| `public/score.js` | Bowling-Wertung (Strike, Spare, 10. Frame) und Anzeigetafel für alle Spieler |
 | `public/sound.js` | Klacken, Rollen, Jubel – alles per WebAudio erzeugt |
 | `public/vendor/` | three.js, cannon-es (lokal, läuft offline) |
 

@@ -17,7 +17,12 @@
     <div class="card">
       <div class="logo">🎳</div>
       <h1>Lara</h1>
-      <p class="sub">Bowling in deinem Zimmer</p>
+      <p class="sub">Bowling in jedem Raum – allein oder reihum zu mehreren</p>
+      <div class="psetup">
+        <div class="ptitle">Wer spielt? <small>reihum mit einem Gerät</small></div>
+        <div id="players"></div>
+        <button id="p-add" class="btn ghost small">+ Spieler</button>
+      </div>
       <div class="buttons">
         <button id="btn-ar" class="btn main" hidden>In Mixed Reality spielen</button>
         <button id="btn-vr" class="btn" hidden>In VR spielen</button>
@@ -28,7 +33,8 @@
         <li><b>Kegel aufstellen:</b> auf den Boden zielen und drücken – dort steht der erste Kegel, das Dreieck zeigt von dir weg.</li>
         <li><b>Werfen:</b> Kugel mit der Hand (Daumen + Zeigefinger zusammen) oder dem Controller (Grifftaste) greifen, Arm schwingen, loslassen.</li>
         <li><b>Handy:</b> auf den Boden tippen zum Aufstellen, dann nach oben wischen zum Rollen.</li>
-        <li>Wertung wie im echten Bowling: 10 Frames, Strike, Spare, Bonuswürfe.</li>
+        <li><b>Mehrere Spieler:</b> oben Namen eintragen. Jeder spielt einen ganzen Frame, dann ist der Nächste dran – die Tafel zeigt, wer dran ist.</li>
+        <li>Wertung wie im echten Bowling: 10 Frames, Strike, Spare, Bonuswürfe. Spielen geht in jedem Raum mit freiem Boden.</li>
       </ul>
     </div>
   </section>
@@ -41,7 +47,7 @@
       <button id="o-new" class="pill">Neues Spiel</button>
       <button id="o-exit" class="pill">Beenden</button>
     </div>
-    <div class="swipe">Nach oben wischen zum Rollen</div>
+    <div id="turn" class="swipe">Nach oben wischen zum Rollen</div>
   </div>
 
   <!-- Bildschirm-Version -->

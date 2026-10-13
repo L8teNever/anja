@@ -23,3 +23,11 @@ h1 { margin: 4px 0 0; font-size: 44px; letter-spacing: .02em; background: linear
 .hud { position: fixed; left: 16px; right: 16px; top: 16px; z-index: 4; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .hud #score { background: rgba(24,18,34,.85); padding: 10px 14px; border-radius: 999px; font-weight: 650; }
 .hud .tip { color: var(--muted); font-size: 14px; }
+.psetup { text-align: left; background: #1d1729; border-radius: 16px; padding: 12px; margin-bottom: 14px; }
+.ptitle { font-weight: 650; margin-bottom: 8px; }
+.ptitle small { color: var(--muted); font-weight: 400; }
+.prow { display: flex; gap: 8px; margin-bottom: 6px; }
+.prow input { flex: 1; min-width: 0; font: inherit; padding: 10px 12px; border-radius: 12px; border: 2px solid #3a2e52; background: #2a2140; color: var(--text); }
+.pdel { font: inherit; border: 0; border-radius: 12px; width: 44px; background: #33284a; color: var(--text); cursor: pointer; }
+.pdel:disabled { opacity: .35; }
+.btn.small { font-size: 15px; padding: 8px 12px; width: 100%; }

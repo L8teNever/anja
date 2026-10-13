@@ -5,7 +5,7 @@
 // Ohne AR: VR mit virtueller Halle oder Bildschirm-Vorschau (Maus wischen).
 import * as THREE from 'three';
 import { Lane, BALL_R } from '/bowling.js';
-import { Game, drawBoard } from '/score.js';
+import { Game, drawBoard, boardHeight, BOARD_W } from '/score.js';
 import { initSound, cheer } from '/sound.js';
 
 const $ = (id) => document.getElementById(id);
@@ -51,18 +51,43 @@ scene.add(hall);
 scene.background = new THREE.Color(0x15111d);
 
 const lane = new Lane(scene);
-const game = new Game();
+// Mehrere Spieler mit einem Geraet: reihum, jeder spielt einen ganzen Frame
+const PLAYERS_KEY = 'lara-players';
+let names = ['Spieler 1'];
+try { const n = JSON.parse(localStorage.getItem(PLAYERS_KEY)); if (Array.isArray(n) && n.length) names = n.slice(0, 8); } catch {}
+let players = [], cur = 0;
+function newGame() {
+  players = names.map((name) => ({ name, game: new Game() }));
+  cur = 0;
+  buildBoard();
+}
 
 // Anzeigetafel ueber den Kegeln
-const bcanvas = document.createElement('canvas'); bcanvas.width = 1024; bcanvas.height = 300;
-const btex = new THREE.CanvasTexture(bcanvas); btex.colorSpace = THREE.SRGBColorSpace;
-const board = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.4 * 300 / 1024), new THREE.MeshBasicMaterial({ map: btex, transparent: true }));
+const bcanvas = document.createElement('canvas'); bcanvas.width = BOARD_W;
+let btex = null;
+const board = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ transparent: true }));
 board.visible = false; scene.add(board);
 let boardMsg = '';
+// Tafel an die Spielerzahl anpassen (je Spieler eine Zeile)
+function buildBoard() {
+  bcanvas.height = boardHeight(players.length);
+  btex?.dispose();
+  btex = new THREE.CanvasTexture(bcanvas); btex.colorSpace = THREE.SRGBColorSpace;
+  board.material.map = btex; board.material.needsUpdate = true;
+  board.geometry.dispose();
+  const w = 1.5, h = w * bcanvas.height / BOARD_W;
+  board.geometry = new THREE.PlaneGeometry(w, h);
+  board.userData.h = h;
+  if (lane.placed) board.position.y = lane.floorY + 0.75 + h / 2;
+  drawScore('');
+}
 function drawScore(msg) {
   if (msg !== undefined) boardMsg = msg;
-  drawBoard(bcanvas.getContext('2d'), game, boardMsg); btex.needsUpdate = true;
-  $('score').textContent = `Frame ${Math.min(game.frame + 1, 10)} · Wurf ${game.ball + 1} · ${game.total} Punkte`;
+  if (!btex) return;
+  drawBoard(bcanvas.getContext('2d'), players, cur, boardMsg); btex.needsUpdate = true;
+  const p = players[cur];
+  const line = `${p.name} · Frame ${Math.min(p.game.frame + 1, 10)} · Wurf ${p.game.ball + 1} · ${p.game.total} Punkte`;
+  $('score').textContent = line; $('turn').textContent = `${p.name} ist dran – nach oben wischen zum Rollen`;
 }
 
 // Werkzeugleiste (Brille)
@@ -211,7 +236,7 @@ function placePins(p) {
   lane.place(p, dir.normalize());
   placing = false; ring.visible = false;
   // Tafel ueber den hinteren Kegeln, zum Spieler gedreht
-  board.position.copy(p).addScaledVector(dir, 1.3).setY(lane.floorY + 1.25);
+  board.position.copy(p).addScaledVector(dir, 1.3).setY(lane.floorY + 0.75 + (board.userData.h || 0.4) / 2);
   board.lookAt(v.x, board.position.y, v.z); board.visible = true;
   sun.position.copy(p).add(new THREE.Vector3(1.5, 4, 1)); sun.target.position.copy(p);
   lane.ballToHome(ballHome());
@@ -223,7 +248,7 @@ function tool(id) {
   if (!id) return;
   if (id === 'place') { placing = !placing; ring.visible = false; }
   else if (id === 'reset') { if (lane.placed) lane.resetPins(); }
-  else if (id === 'new') { game.reset(); if (lane.placed) lane.resetPins(); drawScore(''); }
+  else if (id === 'new') { newGame(); if (lane.placed) lane.resetPins(); }
   else if (id === 'ball') lane.ballToHome(ballHome());
   else if (id === 'exit') renderer.xr.getSession()?.end();
   drawToolbar();
@@ -231,19 +256,33 @@ function tool(id) {
 
 // Wurf auswerten, wenn alles ruhig ist
 function scoreRoll() {
-  const before = lane.pins.filter((p) => p.active).length;
+  if (players.every((pl) => pl.game.over)) newGame();   // nach Spielende: naechster Wurf startet ein neues Spiel
+  const p = players[cur], g = p.game, f0 = g.frame;
+  const before = lane.pins.filter((q) => q.active).length;
   const down = before - lane.standing();
-  const r = game.add(down);
-  let msg = down === 0 ? 'Daneben!' : `${down} Kegel`;
-  if (r.strike) { msg = 'STRIKE!'; cheer(true); } else if (r.spare) { msg = 'Spare!'; cheer(false); }
-  if (r.over) msg = `Spiel vorbei · ${game.total} Punkte`;
+  const r = g.add(down);
+  let msg = down === 0 ? `${p.name}: daneben!` : `${p.name}: ${down} Kegel`;
+  if (r.strike) { msg = `STRIKE, ${p.name}!`; cheer(true); } else if (r.spare) { msg = `Spare, ${p.name}!`; cheer(false); }
+  const turnOver = g.frame !== f0 || r.over;
   drawScore(msg);
   setTimeout(() => {
-    if (r.reset) lane.resetPins(); else lane.clearDown();
-    if (r.over) { game.reset(); lane.resetPins(); }
+    if (turnOver) {
+      lane.resetPins();
+      if (players.every((pl) => pl.game.over)) {
+        const best = players.reduce((a, b) => (b.game.total > a.game.total ? b : a));
+        drawScore(players.length > 1 ? `${best.name} gewinnt mit ${best.game.total}! · Neues Spiel` : `Fertig: ${best.game.total} Punkte · Neues Spiel`);
+        cheer(true);
+      } else {
+        do cur = (cur + 1) % players.length; while (players[cur].game.over);
+        drawScore(players.length > 1 ? `${players[cur].name} ist dran!` : '');
+        if (players.length > 1) setTimeout(() => drawScore(''), 2500);
+      }
+    } else {
+      if (r.reset) lane.resetPins(); else lane.clearDown();
+      drawScore('');
+    }
     lane.ballToHome(ballHome());
-    drawScore('');
-  }, 1300);
+  }, 1400);
 }
 
 /* ---------- Handy: Wischen zum Rollen, Tippen zum Aufstellen ---------- */
@@ -352,10 +391,33 @@ function placeToolbar() {
   toolbar.lookAt(pos.x, toolbar.position.y + 0.25, pos.z);
 }
 
+/* ---------- Spieler-Einstellung (Startseite) ---------- */
+function renderPlayers() {
+  const box = $('players'); box.innerHTML = '';
+  names.forEach((n, i) => {
+    const row = document.createElement('div'); row.className = 'prow';
+    const inp = document.createElement('input'); inp.value = n; inp.maxLength = 14; inp.placeholder = `Spieler ${i + 1}`;
+    inp.addEventListener('input', () => { names[i] = inp.value; });
+    const del = document.createElement('button'); del.className = 'pdel'; del.textContent = '✕'; del.title = 'Entfernen';
+    del.disabled = names.length === 1;
+    del.addEventListener('click', () => { readPlayers(); names.splice(i, 1); renderPlayers(); });
+    row.append(inp, del); box.append(row);
+  });
+  $('p-add').disabled = names.length >= 8;
+}
+function readPlayers() {
+  names = names.map((n, i) => (n || '').trim() || `Spieler ${i + 1}`);
+  try { localStorage.setItem(PLAYERS_KEY, JSON.stringify(names)); } catch {}
+  if (players.length !== names.length || players.some((p, i) => p.name !== names[i])) newGame();
+}
+$('p-add').addEventListener('click', () => { readPlayers(); names.push(`Spieler ${names.length + 1}`); renderPlayers(); });
+renderPlayers();
+
 /* ---------- Start ---------- */
 let phone = false;
 async function start(mode) {
   initSound();
+  readPlayers();
   if (mode === 'screen') {
     $('start').hidden = true; $('hud').hidden = false; hall.visible = true;
     scene.background = new THREE.Color(0x15111d);
@@ -403,6 +465,6 @@ addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; cam
   $('btn-ar').hidden = !ar; $('btn-vr').hidden = !vr;
   if (!ar && !vr) $('hint').textContent = 'Dieses Gerät kann kein WebXR – zum Ausprobieren gibt es die Bildschirm-Version. Für Mixed Reality die Seite in der Meta Quest öffnen (HTTPS nötig).';
 })();
-drawToolbar(); drawScore('');
+newGame(); drawToolbar();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-window.__lara = { lane, game, placePins, tool };   // fuer Tests
+window.__lara = { lane, get players() { return players; }, get cur() { return cur; }, placePins, tool, scoreRoll };   // fuer Tests

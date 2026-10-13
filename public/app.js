@@ -663,6 +663,8 @@ $('room-btn').addEventListener('click', async () => {
 $('room-overlay').addEventListener('beforexrselect', (e) => { if (e.target.closest('button')) e.preventDefault(); });
 $('ro-exit').addEventListener('click', () => room?.end());
 $('ro-add').addEventListener('click', () => room?.addInFront());
+$('ro-fig').addEventListener('click', () => room?.addInFront('fig'));
+$('ro-pose').addEventListener('click', () => room?.nextPose());
 $('ro-undo').addEventListener('click', () => room?.undo());
 $('ro-clear').addEventListener('click', () => room?.clear());
 

@@ -143,8 +143,17 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
   dem Controller zielt man direkt auf Boden/Tisch/Wand zum Hinsetzen. „Raum scannen“
   startet die Raumeinrichtung, „Raum zeigen“ blendet die erkannten Flächen ein/aus.
   Am Handy richtet sich der Würfel nach der erkannten Fläche aus.
-- Werkzeugleiste (Brille, schwebt unten) bzw. Knöpfe (Handy): Würfel +, Letzten weg,
-  Alle weg, Raum scannen, Raum zeigen, Beenden. Die Würfel werden gespeichert und beim nächsten Start wieder
+- **Figur:** „Figur +“ stellt eine weibliche Gliederpuppe (Zeichenpuppen-Stil) zu dir
+  gedreht auf den Boden. Am Körper greifen = ganze Figur verschieben/drehen (bleibt
+  aufrecht, steht immer auf dem Boden). Die lila Punkte sind Gelenke: Hand/Fuß ziehen –
+  Arm/Bein folgt (Ellbogen/Knie knicken natürlich), Ellbogen/Knie ziehen – Knickrichtung,
+  Kopf ziehen – Kopf dreht, Brust ziehen – Oberkörper beugt. „Pose ▸“ schaltet durch
+  Stehen, Arme hoch, Sitzen, Knien, Hocke, Liegen – danach frei anpassen.
+- **Kein Neu-Scannen nötig:** die Quest merkt sich den Raum systemweit. Zusätzlich hängt
+  die App alles an einen dauerhaften Raum-Anker – Würfel und Figuren (samt Pose) stehen
+  nach Neustart oder App-Update wieder genau am selben Platz.
+- Werkzeugleiste (Brille, schwebt unten) bzw. Knöpfe (Handy): Würfel +, Figur +, Pose ▸,
+  Letztes weg, Alle weg, Raum scannen, Raum zeigen, Beenden. Die Würfel werden gespeichert und beim nächsten Start wieder
   aufgestellt (so genau, wie die Brille den Raum wiedererkennt).
 
 ## Raus aus VR / Durchsicht
@@ -216,6 +225,7 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/band.js` | Rotes Band im Kamerabild finden |
 | `public/room.js` | Raum-Modus: Würfel in der Durchsicht platzieren und greifen |
 | `public/room-scan.js` | Erkannter Raum: Kollision, Andocken an Flächen |
+| `public/figure.js` | Gliederpuppe mit Gelenken, Posen und Zwei-Knochen-IK |
 | `upload.js` | Hochladen in Stücken mit Fortsetzen (nginx-njs) |
 | `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`), Hochladen/Löschen (`/upload/`) |
 | `docker-entrypoint.sh` | setzt die Version beim Start |

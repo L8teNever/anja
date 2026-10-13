@@ -19,6 +19,17 @@ export class RoomScan {
 
   get count() { return { planes: this.planes.size, meshes: this.meshes.size }; }
 
+  // Hoehe des Bodens: tiefste nach oben zeigende Flaeche, sonst 0 (local-floor)
+  floorY() {
+    let y = null;
+    for (const e of this.planes.values()) {
+      if (e.normal.y < 0.8) continue;
+      const py = new THREE.Vector3().setFromMatrixPosition(e.matrix).y;
+      if (y === null || py < y) y = py;
+    }
+    return y === null ? 0 : Math.min(y, 0.3);
+  }
+
   setShow(on) { this.show = on; for (const e of [...this.planes.values(), ...this.meshes.values()]) e.viz.visible = on; }
 
   // Pro XR-Frame aufrufen

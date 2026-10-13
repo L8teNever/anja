@@ -25,7 +25,9 @@ const PHYS = {
 // Koerperabschnitt -> Kapsel-Radius (wie SEGS in figure.js)
 const SEG_R = { root: 0.16, spine: 0.15, chest: 0.15, neck: 0.06, head: 0.11, lShoulder: 0.06, rShoulder: 0.06, lElbow: 0.05, rElbow: 0.05,
   lWrist: 0.05, rWrist: 0.05, lHip: 0.09, rHip: 0.09, lKnee: 0.07, rKnee: 0.07, lAnkle: 0.06, rAnkle: 0.06 };
-const PUSH_K = 600, PUSH_V = 10, PASS = 0.45;   // Druck je m Eindringen, je m/s, Anteil an das Elterngelenk
+const PUSH_K = 600, PUSH_V = 10, PASS = 0.45;
+// Physik-Knochen: Feder k, Daempfung d, Schwerkraft g (m/s^2), Kollisionsradius r, max. Auslenkung (rad)
+const JIGGLE = { breast: { k: 260, d: 9, g: 1.2, r: 0.045, max: 0.5 }, hair: { k: 70, d: 6, g: 2.5, r: 0.03, max: 0.7 } };   // Druck je m Eindringen, je m/s, Anteil an das Elterngelenk
 
 const ease = (t) => t * t * (3 - 2 * t);
 const yawOf = (d) => Math.atan2(d[0] ?? d.x, d[1] ?? d.z);
@@ -73,6 +75,7 @@ export class Motion {
     for (const [k, q] of Object.entries(this.base)) this.f.j[k].quaternion.copy(q);
     this.f.j.root.position.copy(this.rootPos);
     this.tasks = []; this.look = 0;
+    for (const jg of this.f.jiggle) { jg.bone.quaternion.copy(jg.rest); jg.p = null; }
     this.f.updateMatrixWorld(true); this.f.update();
   }
 
@@ -270,7 +273,49 @@ export class Motion {
       f.updateMatrixWorld(true);
     }
     if (this.look > 0.01 && viewer) this._lookAt(viewer, this.look);
+    this._jiggle(dt, colliders);
     f.update();
+  }
+
+  // Brust und Haare: Spitze als Massepunkt an einer Feder zur Ruhe-Spitze, traege bei Bewegung,
+  // von Haenden wegdrueckbar. Der Knochen dreht sich zur simulierten Spitze.
+  _jiggle(dt, colliders) {
+    const f = this.f;
+    if (!f.jiggle.length) return;
+    const head = new THREE.Vector3(), tip = new THREE.Vector3();
+    for (const jg of f.jiggle) {
+      const P = JIGGLE[jg.kind];
+      jg.bone.quaternion.copy(jg.rest);
+      jg.bone.updateMatrixWorld(true);
+      jg.bone.getWorldPosition(head); jg.end.getWorldPosition(tip);
+      const len = head.distanceTo(tip);
+      if (!jg.p) { jg.p = tip.clone(); jg.v = new THREE.Vector3(); }
+      // Feder, Daempfung, etwas Schwerkraft
+      const acc = tip.clone().sub(jg.p).multiplyScalar(P.k).addScaledVector(jg.v, -P.d);
+      acc.y -= P.g;
+      jg.v.addScaledVector(acc, dt);
+      jg.p.addScaledVector(jg.v, dt);
+      // Haende druecken die Spitze weg
+      for (const c of colliders) {
+        const d = jg.p.distanceTo(c.p), min = c.r + P.r;
+        if (d < min && d > 1e-6) {
+          const n = jg.p.clone().sub(c.p).divideScalar(d);
+          jg.p.addScaledVector(n, min - d);
+          const vn = jg.v.dot(n); if (vn < 0) jg.v.addScaledVector(n, -vn * 1.2);
+          jg.v.addScaledVector(c.v, 0.25);
+        }
+      }
+      // Laenge halten und Auslenkung begrenzen
+      const dir = jg.p.clone().sub(head);
+      const rest = tip.clone().sub(head).normalize();
+      if (dir.lengthSq() < 1e-10) dir.copy(rest);
+      dir.normalize();
+      const ang = rest.angleTo(dir);
+      if (ang > P.max) dir.copy(rest.clone().lerp(dir, P.max / ang).normalize());
+      jg.p.copy(head).addScaledVector(dir, len);
+      if (jg.p.distanceTo(tip) > 0.5) { jg.p.copy(tip); jg.v.set(0, 0, 0); }   // nach Teleport (Laufen/Uebergang) nicht nachschleifen
+      f.aimPoint(jg.bone, tip, jg.p);
+    }
   }
 
   // Kopf (60 %) und Hals (40 %) drehen sich zum Spieler, begrenzt auf 65 Grad

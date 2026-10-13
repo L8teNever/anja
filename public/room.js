@@ -76,6 +76,7 @@ export class Room {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType('local-floor');
+    this.renderer.xr.setFoveation?.(1);       // Quest: Rand mit weniger Pixeln rendern (spart GPU)
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
@@ -309,7 +310,9 @@ export class Room {
     if (!this.items.includes(old)) return;
     const f = new Figure(gltf, this.modelId);
     f.position.copy(old.position); f.quaternion.copy(old.quaternion);
-    f.setJoints(old.getJoints()); f.poseName = old.poseName;
+    // gleiches Skelett: Gelenke 1:1 uebernehmen, sonst die Pose nachstellen
+    if (modelInfo(old.modelId).family === modelInfo(this.modelId).family) { f.setJoints(old.getJoints()); f.poseName = old.poseName; }
+    else f.setPose(POSE_NAMES.includes(old.poseName) ? old.poseName : 'Stehen');
     for (const [i, g] of this.grabs) if (g.obj === old || g.fig === old) this.grabs.delete(i);
     this.vel.delete(old);
     this.scene.remove(old); old.dispose();
@@ -448,7 +451,7 @@ export class Room {
       if (t) { this._grabNear(i, t, pt); return; }
     }
     // 3) per Strahl aus der Ferne greifen (Controller, Handy-Finger)
-    const handles = this.figures.flatMap((f) => f.handles), parts = this.figures.flatMap((f) => f.parts);
+    const handles = this.figures.flatMap((f) => f.handles), parts = this.figures.flatMap((f) => f.hits);
     const hit = this._rayHit(inp, [...handles, ...parts, ...this.cubes]);
     if (hit) {
       this.vel.delete(this._figOf(hit.object) || hit.object);
@@ -516,7 +519,7 @@ export class Room {
       return;
     }
     // Figur angeklickt -> Menue
-    const parts = this.figures.flatMap((f) => f.parts);
+    const parts = this.figures.flatMap((f) => f.hits);
     const hit = rc.intersectObjects(parts, false)[0];
     if (hit) this._openMenu(this._figOf(hit.object), hit.point);
   }
@@ -961,7 +964,7 @@ export class Room {
     let hoverTool = null;
     const hot = new Set(), hotHandles = new Set();
     for (const g of this.grabs.values()) { if (g.kind === 'handle') hotHandles.add(g.handle); else hot.add(g.fig || g.obj); }
-    const handles = this.figures.flatMap((f) => f.handles), parts = this.figures.flatMap((f) => f.parts);
+    const handles = this.figures.flatMap((f) => f.handles), parts = this.figures.flatMap((f) => f.hits);
     for (const inp of this.inputs) {
       if (!inp.mode) continue;
       const pt = this.mode === 'build' && this._point(inp);

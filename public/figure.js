@@ -17,7 +17,19 @@ export const MODELS = [
   { id: 'michelle', name: 'Michelle', url: '/models/michelle.glb' },
   { id: 'tsunade', name: 'Tsunade', url: '/models/tsunade.glb' },
   { id: 'miss-white', name: 'Miss White', url: '/models/miss-white.glb' },
+  { id: 'mei', name: 'Mei', url: '/models/mei.glb', family: 'mei' },   // eigenes Skelett (andere Grundpose)
 ];
+// Quest-freundlich: Physical-Material (Spiegelung, IOR) -> Standard, Transparenz -> Alpha-Test (keine Sortierung)
+function lightMaterial(m) {
+  let out;
+  if (m.isMeshPhysicalMaterial) {
+    out = new THREE.MeshStandardMaterial();
+    for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'alphaMap', 'color', 'roughness',
+      'metalness', 'emissive', 'side', 'alphaTest', 'transparent', 'opacity', 'normalScale', 'name']) if (m[k] !== undefined) out[k] = m[k]?.clone && !m[k].isTexture ? m[k].clone() : m[k];
+  } else out = m.clone();
+  if (out.transparent && (out.map || out.alphaMap)) { out.transparent = false; out.alphaTest = Math.max(out.alphaTest || 0, 0.4); out.depthWrite = true; }
+  return out;
+}
 export const modelInfo = (id) => MODELS.find((m) => m.id === id) || MODELS[0];
 const B = (n) => `mixamorig${n}`;
 
@@ -79,7 +91,7 @@ export class Figure extends THREE.Group {
     this.model.traverse((o) => {
       if (o.isMesh) {
         o.frustumCulled = false;
-        o.material = o.material.clone();   // eigenes Material (Hervorheben)
+        o.material = lightMaterial(o.material);   // eigenes, schlankes Material (Hervorheben, Quest)
         o.material.emissive = o.material.emissive || new THREE.Color(0);
         this.parts.push(o);
         this.mat = o.material;
@@ -105,6 +117,27 @@ export class Figure extends THREE.Group {
     };
     for (const s of ['l', 'r']) { grip(`${s}Hand`, 'ikArm'); grip(`${s}Elbow`, 'elbow'); grip(`${s}Foot`, 'ikLeg'); grip(`${s}Knee`, 'knee'); }
     grip('head', 'head'); grip('chest', 'chest');
+    // Treffer-Kapseln statt Haut-Mesh (Strahl gegen 50.000 Dreiecke ist zu teuer fuer die Quest)
+    this.hits = [];
+    const hmat = Figure.hitMat || (Figure.hitMat = new THREE.MeshBasicMaterial({ visible: false }));
+    for (const [name, r] of SEGS) {
+      const a = this.j[name], b = this.c[name];
+      const pa = this._wp(a), pb = this._wp(b), len = pa.distanceTo(pb);
+      const cap = new THREE.Mesh(new THREE.CapsuleGeometry(r * 1.15, Math.max(0.01, len), 3, 8), hmat);
+      const mid = pa.clone().lerp(pb, 0.5), dir = pb.clone().sub(pa).normalize();
+      a.add(cap);
+      cap.position.copy(a.worldToLocal(mid));
+      const wq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      cap.quaternion.copy(a.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(wq));
+      cap.userData.seg = name;
+      this.hits.push(cap);
+    }
+    // Physik-Knochen (Brust, Haare), falls das Modell welche hat
+    this.jiggle = [];
+    for (const [n, kind] of [['BreastL', 'breast'], ['BreastR', 'breast'], ['HairBack', 'hair'], ['HairL', 'hair'], ['HairR', 'hair']]) {
+      const b = this.model.getObjectByName(B(n)), e = this.model.getObjectByName(B(n + '_End'));
+      if (b && e) this.jiggle.push({ bone: b, end: e, kind, rest: b.quaternion.clone() });
+    }
     this.setPose('Stehen');
     // Gesicht zeigt in der Grundpose nach vorne (+Z der Figur): im Kopf-Raum merken
     this.faceLocal = new THREE.Vector3(0, 0, 1).applyQuaternion(this.j.head.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(this._fq()));
@@ -281,6 +314,7 @@ export class Figure extends THREE.Group {
 
   dispose() {
     this.parts.forEach((m) => m.material.dispose());
+    this.hits.forEach((h) => h.geometry.dispose());
     this.hmat.dispose();
   }
 }

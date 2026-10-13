@@ -9,7 +9,7 @@ const APP_CACHE = `anja-app-${VERSION}`;
 const VIDEO_CACHE = 'anja-videos';
 const LIST_CACHE = 'anja-list';
 const MODEL_CACHE = 'anja-models';   // 3D-Modelle: bleiben ueber App-Updates erhalten (geaendertes Modell = neuer Dateiname)
-const MODELS = ['/models/michelle.glb', '/models/tsunade.glb', '/models/miss-white.glb'];
+const MODELS = ['/models/michelle.glb', '/models/tsunade.glb', '/models/miss-white.glb', '/models/mei.glb'];
 
 const SHELL = [
   '/',

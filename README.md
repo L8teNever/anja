@@ -147,8 +147,9 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
   Tipp: Damit die Quest-Begrenzung nicht an den Möbeln stört, die Begrenzung ausschalten
   (geht in der Quest nur mit Entwicklermodus); der Raum-Scan bleibt trotzdem erhalten.
 - **Figur:** „Figur +“ stellt eine Frau als echtes 3D-Modell zu dir gedreht auf den Boden.
-  Drei Modelle, alle mit demselben Mixamo-Skelett: **Michelle** (aus den three.js-Beispielen),
-  **Tsunade** und **Miss White** (`public/models/*.glb`). Der Knopf mit dem Modellnamen
+  Vier Modelle mit Mixamo-Skelett: **Michelle** (aus den three.js-Beispielen), **Tsunade**,
+  **Miss White** und **Mei** (`public/models/*.glb`). Mei hat zusätzlich Physik-Knochen für
+  Brust und Haare. Der Knopf mit dem Modellnamen
   („Michelle ▸“, am Handy das Personen-Symbol) schaltet durch: die aktive Figur wird an
   derselben Stelle und in derselben Pose gegen das nächste Modell getauscht, und neue
   Figuren nutzen dieses Modell. Die Auswahl wird gemerkt, jede gespeicherte Figur behält ihr Modell.
@@ -176,6 +177,14 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
     Sitz-/Liegepose übergehen. Beim Sitzen stehen die Füße per IK auf dem Boden, beim
     Liegen liegt sie längs auf dem Bett, Füße zu dir.
   - „Flächen“ blendet die erkannten Möbel-Flächen ein.
+  - **Brust- und Haarphysik** (Mei): die Spitze jedes Physik-Knochens hängt als Massepunkt an
+    einer Feder – schwingt beim Laufen und Hinsetzen nach und lässt sich mit der Hand wegdrücken.
+- **Flüssig auf der Quest:** Treffer (Strahl, Hover) gehen gegen einfache Kapseln statt gegen die
+  Haut (zehntausende Dreiecke); Materialien werden beim Laden zu einfachen Standard-Materialien
+  ohne Spiegelungs-Extras, Transparenz wird zu Alpha-Test (keine Sortierung); Foveated Rendering
+  an; Modelle mit reduzierten Polygonen und verkleinerten JPEG-Texturen.
+- **Mei:** kam als Character-Creator-Export ohne Skelett in fester Pose (Hand an der Hüfte,
+  Beine gekreuzt). Mit `tools/rig-mei.py` in Blender geriggt (siehe Kopf der Datei).
 - **Eigene Modelle:** Tsunade und Miss White kamen ohne Skelett (statische T-Pose). Sie wurden
   mit `tools/autorig.js` auf Michelles Skelett geriggt: Körper vermessen, Gelenke an die
   passenden Stellen setzen, Hautgewichte von Michelle übertragen. Neue Modelle brauchen

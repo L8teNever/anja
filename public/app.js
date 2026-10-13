@@ -504,6 +504,34 @@ async function openPlayer(src, title) {
   viewer.onInteract = () => hint.classList.add('gone');
   setTimeout(() => hint.classList.add('gone'), 4000);
 
+  // Greenscreen-Einstellungen pro Video merken; Dateiname mit "green"/"chroma" schaltet es gleich an
+  chromaKey = `anja-chroma:${src}`;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(chromaKey)); } catch {}
+  viewer.setChroma({ ...CHROMA_DEFAULT, on: /green|gruen|grün|chroma|keying/i.test(decodeURIComponent(src)), ...saved });
+  viewer.onChroma = (st) => {
+    try { localStorage.setItem(chromaKey, JSON.stringify(st)); } catch {}
+    syncKeyUI(st);
+  };
+  syncKeyUI(viewer.chromaState());
+
+  // Durchsicht (AR): Quest-Passthrough bzw. Handy-Kamera mit Raumerkennung
+  const arSlot = $('ar-slot'); arSlot.innerHTML = '';
+  navigator.xr?.isSessionSupported?.('immersive-ar').then((ok) => {
+    if (!ok || !viewer) return;
+    const b = document.createElement('button');
+    b.className = 'vr-btn glass';
+    b.innerHTML = `${icon('ar')}<span>Durchsicht</span>`;
+    b.addEventListener('click', async () => {
+      try {
+        const sess = await viewer.startAR();
+        b.disabled = true;
+        sess.addEventListener('end', () => { b.disabled = false; });
+      } catch (e) { toast(`Durchsicht ging nicht (${e.message})`, 4000); }
+    });
+    arSlot.appendChild(b);
+  }).catch(() => {});
+
   $('p-gyro').hidden = !('DeviceOrientationEvent' in window && matchMedia('(pointer: coarse)').matches);
   const slot = $('vr-slot'); slot.innerHTML = '';
   // VR-Knopf nur zeigen, wenn das Geraet (z. B. eine VR-Brille) WebXR wirklich kann
@@ -531,6 +559,9 @@ async function openPlayer(src, title) {
 
 function closePlayer() {
   if (!viewer) return;
+  stopCam(); setPicking(false);
+  $('key-panel').hidden = true;
+  viewer.onChroma = null;
   video.pause(); video.removeAttribute('src'); video.load();
   viewer.dispose(); viewer = null; video = null;
   $('p-gyro').classList.remove('on');
@@ -561,6 +592,78 @@ $('p-gyro').addEventListener('click', async () => {
   if (!on && !viewer.gyro) toast('Bewegungssensor aus');
   else toast('Bewegungssensor an – Handy bewegen zum Umschauen');
 });
+/* ---------------- Greenscreen ----------------
+ * Gruene Stellen im Video werden durchsichtig. Dahinter ist dann:
+ *  - in der Brille mit "Durchsicht": dein Zimmer (Passthrough-Kamera der Brille)
+ *  - am Handy mit "Handy-Kamera dahinter": das Bild der Rueckkamera
+ *  - sonst schwarz
+ */
+const CHROMA_DEFAULT = { on: false, color: '#00ff00', sim: 0.18, smooth: 0.08, spill: 0.5 };
+let chromaKey = '';
+let camStream = null;
+let picking = false;
+
+function syncKeyUI(st) {
+  $('p-key').classList.toggle('on', st.on);
+  $('kp-on').checked = st.on;
+  $('kp-color').value = st.color;
+  $('kp-sim').value = st.sim; $('kp-smooth').value = st.smooth; $('kp-spill').value = st.spill;
+}
+
+$('p-key').addEventListener('click', () => {
+  const p = $('key-panel'); p.hidden = !p.hidden;
+  $('kp-cam-row').hidden = !navigator.mediaDevices?.getUserMedia;
+});
+$('kp-close').addEventListener('click', () => { $('key-panel').hidden = true; setPicking(false); });
+$('kp-on').addEventListener('change', (e) => viewer?.setChroma({ on: e.target.checked }));
+$('kp-color').addEventListener('input', (e) => viewer?.setChroma({ color: e.target.value, on: true }));
+for (const k of ['sim', 'smooth', 'spill']) {
+  $(`kp-${k}`).addEventListener('input', (e) => viewer?.setChroma({ [k]: Number(e.target.value) }));
+}
+$('kp-reset').addEventListener('click', () => viewer?.setChroma({ ...CHROMA_DEFAULT, on: true }));
+
+function setPicking(on) {
+  picking = on;
+  $('stage').classList.toggle('picking', on);
+  $('kp-pick').classList.toggle('pill-accent', on);
+  $('kp-hint').textContent = on ? 'Tippe im Video auf das Grün' : '';
+}
+$('kp-pick').addEventListener('click', () => setPicking(!picking));
+// Pipette faengt den Tipp ab, bevor der Viewer ihn als Ziehen nimmt
+$('stage').addEventListener('pointerdown', (e) => {
+  if (!picking || !viewer) return;
+  e.stopPropagation(); e.preventDefault();
+  const c = viewer.pickColor(e.clientX, e.clientY);
+  setPicking(false);
+  if (c) { viewer.setChroma({ color: c, on: true }); toast(`Farbe ${c} wird durchsichtig`); }
+  else toast('Farbe konnte nicht gelesen werden');
+}, true);
+
+async function startCam() {
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+  } catch (e) {
+    toast(location.protocol === 'https:' || location.hostname === 'localhost'
+      ? 'Kein Zugriff auf die Kamera' : 'Kamera geht nur über HTTPS', 4000);
+    $('kp-cam').checked = false; return;
+  }
+  const v = document.createElement('video');
+  v.id = 'cam-bg'; v.className = 'cam-bg';
+  v.muted = true; v.playsInline = true; v.setAttribute('playsinline', '');
+  v.srcObject = camStream;
+  $('stage').prepend(v);
+  v.play().catch(() => {});
+  if (!viewer.chromaState().on) viewer.setChroma({ on: true });
+  // Kamera + Bewegungssensor = das Video "steht" im Raum
+  if (!viewer.gyro && !$('p-gyro').hidden) $('p-gyro').click();
+}
+function stopCam() {
+  camStream?.getTracks().forEach((t) => t.stop()); camStream = null;
+  $('cam-bg')?.remove();
+  $('kp-cam').checked = false;
+}
+$('kp-cam').addEventListener('change', (e) => (e.target.checked ? startCam() : stopCam()));
+
 $('p-back').addEventListener('click', () => { if (history.state?.player) history.back(); else closePlayer(); });
 addEventListener('popstate', () => closePlayer());
 

@@ -12,7 +12,10 @@ export class Viewer {
     this.gyro = false; this.gyroOffset = 0;
     this.orient = null; this.screenAngle = 0;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // alpha: true, damit ausgestanzte (gruene) Stellen durchsichtig sind –
+    // dahinter liegt dann der Raum (AR-Durchsicht) oder das Kamerabild vom Handy
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this.renderer.setClearColor(0x000000, 0);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType('local');
@@ -24,7 +27,8 @@ export class Viewer {
 
     this.texture = new THREE.VideoTexture(video);
     this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.material = new THREE.MeshBasicMaterial({ map: this.texture });
+    this.material = new THREE.MeshBasicMaterial({ map: this.texture, transparent: true });
+    this._initChroma();
     // Alle Video-Kugeln haengen an einer Gruppe, damit "Ausrichten" alle dreht
     this.mesh = new THREE.Group();
     this.scene.add(this.mesh);
@@ -40,6 +44,7 @@ export class Viewer {
     this.vrMenu = new VRMenu({
       renderer: this.renderer, scene: this.scene, video, title,
       onRecenter: () => this._recenterXR(),
+      chroma: { get: () => this.chromaState().on, toggle: () => this.setChroma({ on: !this.chromaState().on }) },
     });
     this.renderer.xr.addEventListener('sessionend', () => { this.mesh.rotation.y = 0; });
 
@@ -62,12 +67,96 @@ export class Viewer {
       const uv = geo.attributes.uv;
       for (let i = 0; i < uv.count; i++) uv.setXY(i, u0 + uv.getX(i) * su, v0 + uv.getY(i) * sv);
       const m = new THREE.Mesh(geo, this.material);
+      m.rotation.y = -Math.PI / 2; // Bildmitte des Videos liegt vorne (Blickrichtung beim Start)
       m.layers.set(layer);
       this.mesh.add(m);
     };
     if (layout === 'tb') { eye(0, 0.5, 1, 0.5, 1); eye(0, 0, 1, 0.5, 2); }
     else if (layout === 'lr') { eye(0, 0, 0.5, 1, 1); eye(0.5, 0, 0.5, 1, 2); }
     else { eye(0, 0, 1, 1, 0); }
+  }
+
+  // Greenscreen: Pixel nahe an der Schluesselfarbe werden durchsichtig.
+  // Vergleich im CbCr-Farbraum (Helligkeit egal -> Schatten auf dem Gruen gehen mit weg),
+  // weiche Kante per smoothstep, Gruenstich an den Raendern wird entsaettigt.
+  _initChroma() {
+    this.chroma = {
+      on: { value: 0 },
+      key: { value: new THREE.Color(0x00ff00) },   // sRGB-Werte, nicht linear
+      sim: { value: 0.18 },
+      smooth: { value: 0.08 },
+      spill: { value: 0.5 },
+    };
+    const u = this.chroma;
+    this.material.customProgramCacheKey = () => 'anja-chroma';
+    this.material.onBeforeCompile = (sh) => {
+      sh.uniforms.uKeyOn = u.on; sh.uniforms.uKey = u.key;
+      sh.uniforms.uKeySim = u.sim; sh.uniforms.uKeySmooth = u.smooth; sh.uniforms.uKeySpill = u.spill;
+      sh.fragmentShader = `uniform float uKeyOn; uniform vec3 uKey; uniform float uKeySim, uKeySmooth, uKeySpill;
+vec2 anjaCbCr(vec3 c) { float y = dot(c, vec3(0.299, 0.587, 0.114)); return vec2((c.b - y) * 0.565, (c.r - y) * 0.713); }
+` + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+if (uKeyOn > 0.5) {
+  vec3 srgb = pow(max(diffuseColor.rgb, vec3(0.0)), vec3(1.0 / 2.2));
+  float d = distance(anjaCbCr(srgb), anjaCbCr(uKey));
+  float a = smoothstep(uKeySim, uKeySim + uKeySmooth, d);
+  diffuseColor.a *= a;
+  float sp = pow(1.0 - smoothstep(uKeySim, uKeySim + uKeySmooth + uKeySpill * 0.4, d), 1.5) * uKeySpill;
+  float l = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(l), clamp(sp, 0.0, 1.0));
+}`);
+    };
+  }
+
+  // { on, color: '#00ff00', sim, smooth, spill }
+  setChroma(opts) {
+    const u = this.chroma;
+    if ('on' in opts) u.on.value = opts.on ? 1 : 0;
+    if (opts.color) u.key.value.setStyle(opts.color, THREE.NoColorSpace);
+    if ('sim' in opts) u.sim.value = opts.sim;
+    if ('smooth' in opts) u.smooth.value = opts.smooth;
+    if ('spill' in opts) u.spill.value = opts.spill;
+    this.onChroma?.(this.chromaState());
+  }
+
+  chromaState() {
+    const u = this.chroma;
+    return { on: u.on.value > 0.5, color: '#' + u.key.value.getHexString(THREE.NoColorSpace),
+      sim: u.sim.value, smooth: u.smooth.value, spill: u.spill.value };
+  }
+
+  // Pipette: Farbe des Videos an einer Bildschirmstelle (Mittelwert 5×5 Pixel)
+  pickColor(clientX, clientY) {
+    const v = this.video;
+    if (!v.videoWidth) return null;
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+    const rc = new THREE.Raycaster();
+    rc.layers.enableAll();
+    rc.setFromCamera(ndc, this.camera);
+    const hit = rc.intersectObjects(this.mesh.children.filter((m) => m.layers.mask & 3), false)[0];
+    if (!hit?.uv) return null;
+    const c = this._pickCanvas || (this._pickCanvas = document.createElement('canvas'));
+    c.width = 5; c.height = 5;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const x = hit.uv.x * v.videoWidth, y = (1 - hit.uv.y) * v.videoHeight;
+    try {
+      ctx.drawImage(v, x - 2.5, y - 2.5, 5, 5, 0, 0, 5, 5);
+      const d = ctx.getImageData(0, 0, 5, 5).data;
+      let R = 0, G = 0, B = 0;
+      for (let i = 0; i < d.length; i += 4) { R += d[i]; G += d[i + 1]; B += d[i + 2]; }
+      const hex = (n) => Math.round(n / 25).toString(16).padStart(2, '0');
+      return `#${hex(R)}${hex(G)}${hex(B)}`;
+    } catch { return null; }
+  }
+
+  // Durchsicht: WebXR-AR (Quest-Passthrough, Android-Handy mit Kamera)
+  async startAR() {
+    const session = await navigator.xr.requestSession('immersive-ar', {
+      optionalFeatures: ['local-floor', 'hand-tracking'],
+    });
+    if (!this.chromaState().on) this.setChroma({ on: true });
+    await this.renderer.xr.setSession(session);
+    return session;
   }
 
   vrButton() {

@@ -31,12 +31,13 @@ function rrect(ctx, x, y, w, h, r) {
 }
 
 export class VRMenu {
-  constructor({ renderer, scene, video, title = '', onRecenter }) {
+  constructor({ renderer, scene, video, title = '', onRecenter, chroma }) {
     this.renderer = renderer;
     this.scene = scene;
     this.video = video;
     this.title = title;
     this.onRecenter = onRecenter;
+    this.chroma = chroma;          // { get(): bool, toggle() } – Greenscreen
     this.visible = false;
     this.hover = new Map();        // controller -> Button-ID
     this.drag = null;              // { ctrl, frac } beim Spulen
@@ -44,16 +45,17 @@ export class VRMenu {
     this.lastDraw = 0;
     this._place = false;
 
-    const slot = (W - 48) / 7;
+    const slot = (W - 48) / 8;
     this.buttons = [
       { id: 'back', icon: 'fast_rewind', label: '−10 s' },
       { id: 'play', icon: 'pause', label: 'Pause', big: true },
       { id: 'fwd', icon: 'fast_forward', label: '+10 s' },
       { id: 'mute', icon: 'volume_up', label: 'Ton' },
       { id: 'center', icon: 'center_focus_strong', label: 'Ausrichten' },
+      { id: 'key', icon: 'layers', label: 'Grün weg' },
       { id: 'hide', icon: 'expand_more', label: 'Ausblenden' },
-      { id: 'exit', icon: 'close', label: 'VR beenden' },
-    ].map((b, i) => ({ ...b, cx: 24 + slot * (i + 0.5), cy: ROW_Y, r: b.big ? 58 : 46 }));
+      { id: 'exit', icon: 'close', label: 'Beenden' },
+    ].map((b, i) => ({ ...b, cx: 24 + slot * (i + 0.5), cy: ROW_Y, r: b.big ? 54 : 42 }));
 
     // Tafel
     this.canvas = document.createElement('canvas');
@@ -201,6 +203,7 @@ export class VRMenu {
       case 'fwd': if (v.duration) v.currentTime = Math.min(v.duration - 0.25, v.currentTime + 10); break;
       case 'mute': v.muted = !v.muted; break;
       case 'center': this.onRecenter?.(); this._place = true; break;
+      case 'key': this.chroma?.toggle(); break;
       case 'hide': this.hide(); break;
       case 'exit': this.renderer.xr.getSession()?.end(); break;
     }
@@ -269,12 +272,13 @@ export class VRMenu {
       let name = b.icon, label = b.label;
       if (b.id === 'play') { name = v.paused ? 'play_arrow' : 'pause'; label = v.paused ? 'Abspielen' : 'Pause'; }
       if (b.id === 'mute') { name = v.muted ? 'volume_off' : 'volume_up'; label = v.muted ? 'Ton an' : 'Ton aus'; }
+      const keyOn = b.id === 'key' && this.chroma?.get();
       const on = hovered.has(b.id);
       ctx.beginPath(); ctx.arc(b.cx, b.cy, on ? b.r + 4 : b.r, 0, Math.PI * 2);
-      ctx.fillStyle = b.big ? C.accent : on ? C.hover : C.btn; ctx.fill();
+      ctx.fillStyle = b.big ? C.accent : on ? C.hover : keyOn ? 'rgba(126,224,176,0.30)' : C.btn; ctx.fill();
       if (b.big && on) { ctx.lineWidth = 5; ctx.strokeStyle = C.text; ctx.stroke(); }
       this._icon(name, b.cx, b.cy, b.big ? 60 : 44, b.big ? C.ink : C.text);
-      ctx.font = '500 21px system-ui, sans-serif';
+      ctx.font = '500 20px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = on ? C.text : C.muted;
       ctx.fillText(label, b.cx, ROW_Y + 82);

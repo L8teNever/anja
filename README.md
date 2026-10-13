@@ -46,6 +46,24 @@ also nur im eigenen Netz/VPN oder hinter einer Anmeldung betreiben.
 3D-360°-Videos (übereinander/nebeneinander) werden erkannt: in der VR-Brille sieht jedes Auge
 sein eigenes Bild, sonst wird das linke Bild gezeigt.
 
+## Greenscreen & Durchsicht (dein Zimmer hinter dem Video)
+
+Im Player oben auf das Ebenen-Symbol tippen:
+
+- **Grün durchsichtig machen** – alles in der Schlüsselfarbe wird ausgestanzt (Vergleich nach
+  Farbton, Schatten auf dem Grün gehen mit weg). Videos mit „green“, „gruen“, „chroma“ oder
+  „keying“ im Namen starten automatisch mit Greenscreen.
+- **Farbe / Aus Video wählen** – Pipette: einmal ins Video auf das Grün tippen.
+- **Toleranz, Weiche Kante, Grünstich weg** – Feinabstimmung; wird pro Video gespeichert.
+- **Handy-Kamera dahinter** – am Handy läuft das Bild der Rückkamera hinter dem Video,
+  der Bewegungssensor geht dabei mit an.
+- **Durchsicht** (Knopf oben, nur wenn das Gerät WebXR-AR kann, z. B. Meta Quest oder
+  Android-Chrome) – startet die Brille im Passthrough: die grünen Stellen zeigen dein Zimmer.
+  Greenscreen schaltet sich dabei automatisch ein.
+
+Im VR-Menü der Brille schaltet „Grün weg“ den Greenscreen an und aus.
+Kamera und Durchsicht brauchen HTTPS.
+
 ## Steuerung in der VR-Brille
 
 Im VR-Modus schwebt ein eigenes Menü vor dir: Abspielen/Pause, ±10 Sekunden, Fortschrittsbalken

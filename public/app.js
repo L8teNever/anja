@@ -812,10 +812,15 @@ async function openPlayer(src, title, item = null) {
     b.innerHTML = `${icon('ar')}<span>Durchsicht</span>`;
     b.addEventListener('click', async () => {
       try {
-        const sess = await viewer.startAR();
+        const ov = $('xr-overlay');
+        ov.hidden = false;
+        syncOverlay();
+        const sess = await viewer.startAR(ov);
+        if (!sess.domOverlayState) ov.hidden = true;   // Brille: dort gibt es das 3D-Menue
+        sess.addEventListener('end', () => { ov.hidden = true; });
         b.disabled = true;
         sess.addEventListener('end', () => { b.disabled = false; });
-      } catch (e) { toast(`Durchsicht ging nicht (${e.message})`, 4000); }
+      } catch (e) { $('xr-overlay').hidden = true; toast(`Durchsicht ging nicht (${e.message})`, 4000); }
     });
     arSlot.appendChild(b);
   }).catch(() => {});
@@ -832,14 +837,16 @@ async function openPlayer(src, title, item = null) {
     slot.appendChild(b);
   }).catch(() => {});
 
-  video.addEventListener('loadedmetadata', () => { $('p-dur').textContent = fmtTime(video.duration); });
+  const v = video; // Ereignisse nach dem Schliessen (video = null) ignorieren
+  video.addEventListener('loadedmetadata', () => { if (video === v) $('p-dur').textContent = fmtTime(v.duration); });
   video.addEventListener('timeupdate', () => {
+    if (video !== v) return;
     $('p-time').textContent = fmtTime(video.currentTime);
     if (!seeking && video.duration) $('p-seek').value = Math.round((video.currentTime / video.duration) * 1000);
   });
-  video.addEventListener('play', () => setIcon($('p-play'), 'pause'));
-  video.addEventListener('pause', () => setIcon($('p-play'), 'play_arrow'));
-  video.addEventListener('error', () => toast(navigator.onLine ? 'Video konnte nicht geladen werden' : 'Dieses Video ist nicht offline gespeichert'));
+  video.addEventListener('play', () => { setIcon($('p-play'), 'pause'); syncOverlay(); });
+  video.addEventListener('pause', () => { setIcon($('p-play'), 'play_arrow'); syncOverlay(); });
+  video.addEventListener('error', () => video === v && toast(navigator.onLine ? 'Video konnte nicht geladen werden' : 'Dieses Video ist nicht offline gespeichert'));
 
   try { await video.play(); } catch { /* Browser will erst einen Tipp */ }
   history.pushState({ player: true }, '');
@@ -847,6 +854,8 @@ async function openPlayer(src, title, item = null) {
 
 function closePlayer() {
   if (!viewer) return;
+  if (viewer.inXR) viewer.endXR();
+  $('xr-overlay').hidden = true;
   stopCam(); setPicking(false);
   $('key-panel').hidden = true; $('fmt-panel').hidden = true;
   if (fmtCtx) { clearTimeout(fmtCtx.timer); fmtCtx = null; }
@@ -992,6 +1001,26 @@ function stopCam() {
 $('kp-cam').addEventListener('change', (e) => (e.target.checked ? startCam() : stopCam()));
 
 $('p-back').addEventListener('click', () => { if (history.state?.player) history.back(); else closePlayer(); });
-addEventListener('popstate', () => closePlayer());
+// Zurueck-Taste/-Geste: zuerst VR/Durchsicht beenden, erst dann den Player schliessen
+addEventListener('popstate', () => {
+  if (viewer?.inXR) { viewer.endXR(); history.pushState({ player: true }, ''); return; }
+  closePlayer();
+});
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && viewer?.inXR) viewer.endXR(); });
+
+// Knoepfe im Handy-Durchsicht-Modus
+function syncOverlay() {
+  if (!video || !viewer) return;
+  setIcon($('xo-play'), video.paused ? 'play_arrow' : 'pause');
+  $('xo-key').classList.toggle('on', viewer.chromaState().on);
+}
+// Tipps auf die Knoepfe sollen nicht zusaetzlich als Tipp in die 3D-Szene gehen
+$('xr-overlay').addEventListener('beforexrselect', (e) => e.preventDefault());
+$('xo-exit').addEventListener('click', () => viewer?.endXR());
+$('xo-play').addEventListener('click', () => { if (video) { video.paused ? video.play() : video.pause(); } });
+$('xo-back').addEventListener('click', () => { if (video) video.currentTime = Math.max(0, video.currentTime - 10); });
+$('xo-fwd').addEventListener('click', () => { if (video?.duration) video.currentTime = Math.min(video.duration - 0.25, video.currentTime + 10); });
+$('xo-key').addEventListener('click', () => { viewer?.setChroma({ on: !viewer.chromaState().on }); syncOverlay(); });
+$('xo-center').addEventListener('click', () => viewer?._recenterXR());
 
 initUpload().finally(() => { loadList(); if (uploadEnabled) showPending(); });

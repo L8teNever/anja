@@ -346,6 +346,16 @@ export function fromFrame(img) {
     return sum / n < 24;
   };
   const half = Math.floor(w / 2), halfH = Math.floor(h / 2);
+  // typische Zeile (Median), damit einzelne Kanten an der Naht nicht stoeren
+  const seamless = () => {
+    const seam = [], inner = [];
+    for (let y = 0; y < h; y++) {
+      seam.push(Math.abs(gray(0, y) - gray(w - 1, y)));
+      inner.push(Math.abs(gray(1, y) - gray(2, y)), Math.abs(gray(w - 2, y) - gray(w - 3, y)));
+    }
+    const med = (a) => a.sort((x, y) => x - y)[a.length >> 1];
+    return med(seam) < Math.max(8, med(inner) * 4);
+  };
   const near = (a, b, tol) => Math.abs(a - b) <= tol;
 
   if (near(r, 4, 0.25)) return { f: { kind: 'equirect360', stereo: 'lr' }, informative };
@@ -360,7 +370,10 @@ export function fromFrame(img) {
       return { f: similar ? { kind: 'fisheye', stereo: 'lr' } : { kind: 'dfisheye', stereo: 'mono' }, informative };
     }
     const similar = corr(0, 0, half, 0, half, h) > 0.6;
-    return { f: similar ? { kind: 'equirect180', stereo: 'lr' } : { kind: 'equirect360', stereo: 'mono' }, informative };
+    if (similar) return { f: { kind: 'equirect180', stereo: 'lr' }, informative };
+    // echtes 360° ist rundum: linker und rechter Rand gehen nahtlos ineinander ueber.
+    // Passt die Naht nicht, ist es ein auf 2:1 gestrecktes 180°-Video.
+    return { f: { kind: seamless() ? 'equirect360' : 'equirect180', stereo: 'mono' }, informative };
   }
   if (near(r, 1, 0.08)) {
     if (corr(0, 0, 0, halfH, w, halfH, true) > 0.6) return { f: { kind: 'equirect360', stereo: 'tb' }, informative };

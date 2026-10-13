@@ -164,3 +164,12 @@ input[type=range] { flex: 1; min-width: 40px; accent-color: var(--accent); heigh
 
 .toast { position: fixed; z-index: 70; left: 50%; transform: translateX(-50%); bottom: calc(24px + var(--safe-b));
   background: #2a2240; border: 1px solid #4a3d70; padding: 10px 16px; border-radius: 99px; font-size: 14px; max-width: calc(100% - 32px); }
+
+/* Handy-Durchsicht (AR): Knoepfe ueber dem Kamerabild */
+.xr-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 60; }
+.xr-overlay > * { pointer-events: auto; }
+.xo-exit { position: absolute; left: 12px; top: calc(12px + var(--safe-t)); background: rgba(20,16,32,.75); color: var(--text); font-weight: 700; }
+.xo-exit .ic { width: 20px; height: 20px; }
+.xo-bar { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(16px + var(--safe-b)); display: flex; gap: 8px; padding: 8px; border-radius: 99px; }
+.xo-bar .round:not(.accent) { background: transparent; }
+#xo-key.on { background: var(--ok); color: #0d2a1d; }

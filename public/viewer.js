@@ -297,14 +297,24 @@ export class Viewer {
   }
 
   // Durchsicht: WebXR-AR (Quest-Passthrough, Android-Handy mit Kamera)
-  async startAR() {
-    const session = await navigator.xr.requestSession('immersive-ar', {
-      optionalFeatures: ['local-floor', 'hand-tracking'],
-    });
+  // overlay: HTML-Element mit Knoepfen, das am Handy ueber dem Kamerabild liegt (DOM-Overlay)
+  async startAR(overlay) {
+    const init = { optionalFeatures: ['local-floor', 'hand-tracking'] };
+    if (overlay) { init.optionalFeatures.push('dom-overlay'); init.domOverlay = { root: overlay }; }
+    const session = await navigator.xr.requestSession('immersive-ar', init);
     if (!this.chromaState().on) this.setChroma({ on: true });
     await this.renderer.xr.setSession(session);
+    // Handy: Bildschirm-Knoepfe statt 3D-Menue
+    if (session.domOverlayState) {
+      this.vrMenu.disabled = true;
+      session.addEventListener('end', () => { this.vrMenu.disabled = false; });
+    }
     return session;
   }
+
+  endXR() { this.renderer.xr.getSession()?.end(); }
+
+  get inXR() { return this.renderer.xr.isPresenting; }
 
   vrButton() {
     const b = VRButton.createButton(this.renderer, { optionalFeatures: ['local-floor'] });

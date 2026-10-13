@@ -122,6 +122,18 @@
     </div>
   </section>
 
+  <!-- Knoepfe im Handy-Durchsicht-Modus (WebXR DOM-Overlay) -->
+  <div id="xr-overlay" class="xr-overlay" hidden>
+    <button id="xo-exit" class="pill xo-exit"><span class="material">close</span>Beenden</button>
+    <div class="xo-bar glass">
+      <button id="xo-back" class="round" aria-label="10 Sekunden zurück"><span class="material">fast_rewind</span></button>
+      <button id="xo-play" class="round accent" aria-label="Abspielen/Pause"><span class="material">pause</span></button>
+      <button id="xo-fwd" class="round" aria-label="10 Sekunden vor"><span class="material">fast_forward</span></button>
+      <button id="xo-key" class="round" aria-label="Greenscreen an/aus"><span class="material">layers</span></button>
+      <button id="xo-center" class="round" aria-label="Ausrichten"><span class="material">center_focus_strong</span></button>
+    </div>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <script>window.ANJA_VERSION = "__APP_VERSION__";</script>

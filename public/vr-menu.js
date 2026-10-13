@@ -10,6 +10,8 @@ const PANEL_H = PANEL_W * H / W;
 const BAR = { x: 48, y: 112, w: W - 96, h: 14, hit: 34 };
 const ROW_Y = 236;
 const AUTO_HIDE_MS = 8000;
+const HW = 512, HH = 96;             // Griff "Menü | Beenden" (Canvas-Pixel)
+const HANDLE_W = 0.36;               // Meter
 
 const C = {
   bg: 'rgba(22, 19, 31, 0.88)', line: 'rgba(255,255,255,0.10)',
@@ -99,8 +101,26 @@ export class VRMenu {
       return c;
     });
 
-    this._onStart = () => this.show();
-    this._onEnd = () => this.hide();
+    // Kleiner Griff "Menü | Beenden", immer unten im Blickfeld, solange das Menue zu ist –
+    // so kommt man jederzeit raus, auch ohne zu wissen, dass "ins Leere tippen" das Menue oeffnet.
+    this.hcanvas = document.createElement('canvas');
+    this.hcanvas.width = HW; this.hcanvas.height = HH;
+    this.hctx = this.hcanvas.getContext('2d');
+    this.htexture = new THREE.CanvasTexture(this.hcanvas);
+    this.htexture.colorSpace = THREE.SRGBColorSpace;
+    this.handle = new THREE.Mesh(
+      new THREE.PlaneGeometry(HANDLE_W, HANDLE_W * HH / HW),
+      new THREE.MeshBasicMaterial({ map: this.htexture, transparent: true, depthTest: false }),
+    );
+    this.handle.renderOrder = 10;
+    this.handle.visible = false;
+    scene.add(this.handle);
+    this.disabled = false;         // z. B. Handy-AR mit Bildschirm-Knoepfen
+    this._hHover = null;
+    this._drawHandle();
+
+    this._onStart = () => { this._placeHandle(true); this.show(); };
+    this._onEnd = () => { this.hide(); this.handle.visible = false; };
     renderer.xr.addEventListener('sessionstart', this._onStart);
     renderer.xr.addEventListener('sessionend', this._onEnd);
   }
@@ -124,16 +144,26 @@ export class VRMenu {
   // Pro Frame aus der Render-Schleife aufrufen (nur im VR-Modus)
   update() {
     const now = performance.now();
+    if (this.disabled) {
+      this.panel.visible = false; this.handle.visible = false;
+      for (const c of this.controllers) { c.userData.ray.visible = false; c.userData.dot.visible = false; }
+      return;
+    }
     if (this._place) { this._placeInFront(); this._place = false; this.panel.visible = true; }
+    this.handle.visible = !this.visible;
+    if (!this.visible) this._placeHandle(false);
 
-    let changed = false;
+    let changed = false, hNew = null, hCtrl = null;
     for (const c of this.controllers) {
       const { ray, dot, mode } = c.userData;
       const pointer = mode === 'tracked-pointer';
       const hit = this.visible && mode ? this._hit(c) : null;
-      ray.visible = pointer && this.visible;
+      const hHit = !this.visible && mode ? this._hit(c, this.handle) : null;
+      if (hHit) { hNew = hHit.uv.x < 0.5 ? 'open' : 'exit'; hCtrl = c; }
+      ray.visible = pointer && (this.visible || !!hHit);
       dot.visible = !!hit;
-      if (hit) {
+      if (hHit && !hit) { ray.scale.z = hHit.distance; dot.visible = true; dot.position.copy(hHit.point); dot.quaternion.copy(this.handle.quaternion); dot.translateZ(0.002); }
+      else if (hit) {
         ray.scale.z = hit.distance;
         dot.position.copy(hit.point);
         dot.quaternion.copy(this.panel.quaternion);
@@ -154,6 +184,7 @@ export class VRMenu {
       if (id) this.lastActivity = now;
     }
 
+    if (hNew !== this._hHover) { this._hHover = hNew; this._drawHandle(); if (hNew) this._pulse(hCtrl, 0.25, 15); }
     if (this.visible && !this.video.paused && !this.drag && now - this.lastActivity > AUTO_HIDE_MS) this.hide();
     if (this.visible && (changed || now - this.lastDraw > 250)) this.draw();
   }
@@ -170,11 +201,47 @@ export class VRMenu {
     this.panel.lookAt(pos);
   }
 
-  _hit(c) {
+  _hit(c, obj = this.panel) {
     this._m.identity().extractRotation(c.matrixWorld);
     this.raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
     this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this._m);
-    return this.raycaster.intersectObject(this.panel, false)[0] || null;
+    return this.raycaster.intersectObject(obj, false)[0] || null;
+  }
+
+  // Griff unten im Blickfeld; folgt dem Kopf, wenn man sich weiter wegdreht
+  _placeHandle(force) {
+    const cam = this.renderer.xr.getCamera();
+    const pos = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld));
+    dir.y = 0;
+    if (dir.lengthSq() < 1e-4) return;
+    dir.normalize();
+    const yaw = Math.atan2(dir.x, dir.z);
+    if (!force && this._hYaw !== undefined) {
+      let d = yaw - this._hYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+      if (Math.abs(d) < 0.6) return;                 // erst ab ~35° Drehung nachziehen
+      this._hYaw += d * 0.08;                        // weich hinterher
+    } else this._hYaw = yaw;
+    const f = new THREE.Vector3(Math.sin(this._hYaw), 0, Math.cos(this._hYaw));
+    this.handle.position.copy(pos).addScaledVector(f, 1.1);
+    this.handle.position.y = pos.y - 0.55;
+    this.handle.lookAt(pos);
+  }
+
+  _drawHandle() {
+    const ctx = this.hctx;
+    ctx.clearRect(0, 0, HW, HH);
+    const half = HW / 2;
+    [['open', 'more_vert', 'Menü', 0], ['exit', 'close', 'Beenden', half]].forEach(([id, ic, label, x0]) => {
+      rrect(ctx, x0 + 6, 6, half - 12, HH - 12, (HH - 12) / 2);
+      ctx.fillStyle = this._hHover === id ? 'rgba(182,156,255,0.85)' : C.bg; ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = C.line; ctx.stroke();
+      this._icon(ic, x0 + 52, HH / 2, 40, this._hHover === id ? C.ink : C.text, ctx);
+      ctx.font = '600 34px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      ctx.fillStyle = this._hHover === id ? C.ink : C.text;
+      ctx.fillText(label, x0 + 84, HH / 2 + 1);
+    });
+    this.htexture.needsUpdate = true;
   }
 
   _px(uv) { return { x: uv.x * W, y: (1 - uv.y) * H }; }
@@ -189,7 +256,16 @@ export class VRMenu {
   }
 
   _press(c) {
-    const hit = this.visible ? this._hit(c) : null;
+    if (this.disabled) return;
+    if (!this.visible) {
+      const h = this._hit(c, this.handle);
+      if (h) {
+        this._pulse(c, 0.6, 30);
+        if (h.uv.x >= 0.5) { this.renderer.xr.getSession()?.end(); return; }
+      }
+      this.show(); return;
+    }
+    const hit = this._hit(c);
     if (!hit) { this.toggle(); return; }  // ins Leere: Menue ein/aus
     this.lastActivity = performance.now();
     const id = this._targetAt(hit.uv);
@@ -222,8 +298,7 @@ export class VRMenu {
     try { c.userData.source?.gamepad?.hapticActuators?.[0]?.pulse(intensity, ms); } catch { /* kein Vibrieren */ }
   }
 
-  _icon(name, cx, cy, size, color) {
-    const ctx = this.ctx;
+  _icon(name, cx, cy, size, color, ctx = this.ctx) {
     ctx.save();
     ctx.translate(cx - size / 2, cy - size / 2);
     ctx.scale(size / 24, size / 24);
@@ -286,7 +361,7 @@ export class VRMenu {
 
     ctx.font = '400 19px system-ui, sans-serif';
     ctx.fillStyle = C.muted; ctx.textAlign = 'center';
-    ctx.fillText('Abzug oder Pinch ins Leere: Menü ein/aus', W / 2, H - 30);
+    ctx.fillText('Abzug/Pinch ins Leere: Menü ein/aus · Zurück-Taste: beenden', W / 2, H - 30);
 
     this.texture.needsUpdate = true;
   }
@@ -300,7 +375,8 @@ export class VRMenu {
       dot.geometry.dispose(); dot.material.dispose();
       this.scene.remove(dot); this.scene.remove(c);
     }
-    this.scene.remove(this.panel);
+    this.scene.remove(this.panel); this.scene.remove(this.handle);
+    this.handle.geometry.dispose(); this.handle.material.dispose(); this.htexture.dispose();
     this.panel.geometry.dispose(); this.panel.material.dispose();
     this.texture.dispose();
   }

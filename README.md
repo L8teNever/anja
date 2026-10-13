@@ -60,7 +60,7 @@ Die App erkennt das Format selbst und rechnet es auf der Grafikkarte richtig um
 | Format | Typisch |
 |---|---|
 | 360° equirektangular (2:1) | die meisten 360°-Kameras/Exporte |
-| 180° / VR180 | VR180-Kameras, viele VR-Filme |
+| 180° / VR180 | VR180-Kameras, viele VR-Filme – auch auf 2:1 gestreckt (erkannt an der nicht passenden Naht) |
 | 3D übereinander / nebeneinander (auch Augen vertauscht) | 3D-360° und 3D-180° |
 | Fischauge (180–220°, mono oder 3D) | VR180-Rohmaterial, `_MKX200`, `_FISHEYE190` |
 | Doppel-Fischauge 360° | Rohdateien von 360°-Kameras |
@@ -94,6 +94,15 @@ Im Player oben auf das Ebenen-Symbol tippen:
 
 Im VR-Menü der Brille schaltet „Grün weg“ den Greenscreen an und aus.
 Kamera und Durchsicht brauchen HTTPS.
+
+## Raus aus VR / Durchsicht
+
+- **Brille:** unten im Blickfeld schwebt immer ein kleiner Griff „Menü | Beenden“.
+  Draufzeigen und Abzug/Pinch. Im großen Menü gibt es zusätzlich „Beenden“.
+- **Handy im Durchsicht-Modus:** Bildschirm-Knöpfe über dem Kamerabild
+  (Beenden, Pause, ±10 s, Grün, Ausrichten).
+- **Überall:** Zurück-Taste/-Geste (bzw. Escape) beendet VR/Durchsicht; ein zweites
+  Zurück schließt den Player.
 
 ## Steuerung in der VR-Brille
 

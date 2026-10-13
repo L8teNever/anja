@@ -140,7 +140,12 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
 - **Boden:** Würfel und Figuren können nicht unter den Boden. Nah am Boden losgelassene
   Würfel legen sich flach hin; mit dem Controller auf den Boden zielen setzt einen Würfel
   genau dorthin. Die Quest kennt die Bodenhöhe aus ihrer Begrenzung – kein Scan nötig.
-  Wände und Möbel werden bewusst nicht erkannt.
+- **Möbel als Auflage:** Ist der Raum in der Quest eingerichtet (Raumeinrichtung), nutzt die
+  App die Oberseiten von Bett, Sofa, Tisch usw. (WebXR plane-/mesh-detection) nur als
+  Auflage: über dem Bett losgelassene Würfel und Figuren landen auf der Matratze statt
+  darin. Der Boden bleibt der echte Boden, Wände bremsen nichts – man kann überall hinlaufen.
+  Tipp: Damit die Quest-Begrenzung nicht an den Möbeln stört, die Begrenzung ausschalten
+  (geht in der Quest nur mit Entwicklermodus); der Raum-Scan bleibt trotzdem erhalten.
 - **Figur:** „Figur +“ stellt eine Frau als echtes 3D-Modell zu dir gedreht auf den Boden.
   Drei Modelle, alle mit demselben Mixamo-Skelett: **Michelle** (aus den three.js-Beispielen),
   **Tsunade** und **Miss White** (`public/models/*.glb`). Der Knopf mit dem Modellnamen
@@ -234,6 +239,7 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/projection.js` | Formate: Erkennung, Umrechnung, Vorschaubilder, Greenscreen-Auto |
 | `public/band.js` | Rotes Band im Kamerabild finden |
 | `public/room.js` | Raum-Modus: Würfel in der Durchsicht platzieren und greifen |
+| `public/room-surfaces.js` | Möbel-Flächen aus der Raumeinrichtung (Auflage, Platzfinder) |
 | `public/figure.js` | Figur (3D-Modell) mit Gelenken, Posen und Zwei-Knochen-IK |
 | `public/models/` | 3D-Modell der Figur (GLB mit Mixamo-Skelett) |
 | `upload.js` | Hochladen in Stücken mit Fortsetzen (nginx-njs) |

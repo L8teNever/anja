@@ -11,6 +11,7 @@
 // - Dauerhafter Raum-Anker (Quest): Objekte stehen nach Neustart/App-Update wieder am selben Platz.
 import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
+import { Surfaces } from '/room-surfaces.js';
 import { Figure, MODELS, POSE_NAMES, loadFigureModel, modelInfo } from '/figure.js';
 
 const SIZE = 0.2;                       // Wuerfel-Kantenlaenge in Metern
@@ -99,6 +100,7 @@ export class Room {
     this.scene.add(this.reticle);
 
     this.floorY = 0;                        // Bodenhoehe (local-floor: 0)
+    this.surfaces = new Surfaces(this.scene);   // Moebel aus der Raumeinrichtung (nur als Auflage)
     this.settling = new Map();              // Wuerfel -> Ausricht-Animation
 
     // Werkzeugleiste (Brille; am Handy gibt es Bildschirm-Knoepfe)
@@ -129,7 +131,7 @@ export class Room {
 
   // overlay: HTML-Knoepfe fuers Handy (DOM-Overlay)
   async start(overlay) {
-    const init = { optionalFeatures: ['local-floor', 'hand-tracking', 'hit-test', 'anchors'] };
+    const init = { optionalFeatures: ['local-floor', 'hand-tracking', 'hit-test', 'anchors', 'plane-detection', 'mesh-detection'] };
     if (overlay) { init.optionalFeatures.push('dom-overlay'); init.domOverlay = { root: overlay }; }
     const session = await navigator.xr.requestSession('immersive-ar', init);
     try { await this.renderer.xr.setSession(session); }
@@ -210,7 +212,7 @@ export class Room {
     if (joints) f.setJoints(joints);
     this.scene.add(f); this.items.push(f);
     f.measureBottom();
-    if (!silent) { f.ground(this.floorY); this._save(); }
+    if (!silent) { f.updateMatrixWorld(true); f.ground(this._figSupport(f, pos.y + 0.1)); this._save(); }
     this.activeFigure = f;
     return f;
   }
@@ -232,8 +234,9 @@ export class Room {
     const f = this.activeFigure || this.figures.at(-1);
     if (!f) { this.note = 'Erst eine Figur hinstellen'; this._drawToolbar(); return; }
     const k = (POSE_NAMES.indexOf(f.poseName) + 1) % POSE_NAMES.length;
+    const sup = this._figSupport(f, f.position.y + (f.bottom ?? 0) + 0.25);
     f.setPose(POSE_NAMES[k]);
-    f.ground(this.floorY);
+    f.ground(sup);
     this.note = `Pose: ${POSE_NAMES[k]} – Gelenke (lila Punkte) ziehen zum Anpassen`;
     this._drawToolbar(); this._save();
   }
@@ -257,7 +260,7 @@ export class Room {
     this.scene.remove(old); old.dispose();
     this.items[this.items.indexOf(old)] = f;
     this.scene.add(f); this.activeFigure = f;
-    f.ground(this.floorY);
+    f.ground(this._figSupport(f, old.position.y + (old.bottom ?? 0) + 0.25));
     this.note = `Modell: ${MODELS[k].name}`;
     this._drawToolbar(); this._save();
   }
@@ -461,7 +464,8 @@ export class Room {
     if (g.fig) {
       g.fig.measureBottom();
       // nicht im Boden stecken lassen; schwebt sie, faellt sie (Schwerkraft)
-      if (g.fig.position.y + g.fig.bottom < this.floorY) g.fig.ground(this.floorY);
+      const b = g.fig.position.y + g.fig.bottom, sup = this._figSupport(g.fig, b + 0.25);
+      if (b < sup) g.fig.ground(sup);
     }
     this._save(); this._pulse(i, 0.3, 20);
   }
@@ -469,7 +473,8 @@ export class Room {
   // nicht unter den Boden
   _floorClamp(cube) {
     const h = halfHeight(cube.quaternion);
-    if (cube.position.y - h < this.floorY) cube.position.y = this.floorY + h;
+    const sup = this._surfaceAt(cube.position.x, cube.position.z, cube.position.y - h + 0.15);
+    if (cube.position.y - h < sup) cube.position.y = sup + h;
   }
 
   // gelandet: flach hinlegen (sanft animiert)
@@ -479,8 +484,8 @@ export class Room {
 
   // worauf ein Wuerfel fallen kann: Boden oder Oberseite eines Wuerfels darunter
   _support(cube) {
-    let s = this.floorY;
     const bottom = cube.position.y - halfHeight(cube.quaternion);
+    let s = this._surfaceAt(cube.position.x, cube.position.z, bottom + 0.06);
     const held = new Set([...this.grabs.values()].map((g) => g.obj));
     for (const o of this.cubes) {
       if (o === cube || held.has(o)) continue;
@@ -492,6 +497,18 @@ export class Room {
     return s;
   }
 
+  // Boden oder Moebel-Oberseite unter einem Punkt (nicht hoeher als maxY)
+  _surfaceAt(x, z, maxY) {
+    const y = this.surfaces.supportAt(x, z, maxY);
+    return y === null ? this.floorY : Math.max(this.floorY, y);
+  }
+
+  // Auflage einer Figur: unter dem Becken
+  _figSupport(f, maxY) {
+    const p = f.j.root.getWorldPosition(new THREE.Vector3());
+    return this._surfaceAt(p.x, p.z, maxY);
+  }
+
   // Schwerkraft: alles, was nicht gehalten wird, faellt bis zur Unterlage
   _gravity(dt) {
     const held = new Set([...this.grabs.values()].map((g) => g.fig || g.obj));
@@ -499,7 +516,7 @@ export class Room {
       if (held.has(o) || this.settling.has(o)) continue;
       const fig = o.isFigure;
       const bottom = fig ? o.position.y + (o.bottom ?? 0) : o.position.y - halfHeight(o.quaternion);
-      const support = fig ? this.floorY : this._support(o);
+      const support = fig ? this._figSupport(o, bottom + 0.06) : this._support(o);
       if (bottom > support + 0.002) {
         const v = (this.vel.get(o) || 0) + 9.81 * dt;
         this.vel.set(o, v);
@@ -553,7 +570,7 @@ export class Room {
   _drawToolbar() {
     const ctx = this.tcanvas.getContext('2d');
     ctx.clearRect(0, 0, TW, TH);
-    const status = this.note || `Pinch/Abzug ins Leere: Würfel · Boden erkannt${this.anchored ? ' · Plätze werden gemerkt' : ''}`;
+    const status = this.note || `Pinch/Abzug ins Leere: Würfel · ${this.surfaces.count ? `${this.surfaces.count} Möbel-Flächen erkannt` : 'nur Boden erkannt'}${this.anchored ? ' · Plätze werden gemerkt' : ''}`;
     ctx.font = '500 22px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const sw = Math.min(TW - 16, ctx.measureText(status).width + 36);
     ctx.fillStyle = 'rgba(22,19,31,0.85)';
@@ -600,6 +617,10 @@ export class Room {
         }
       }
     }
+    // erkannte Moebel-Flaechen
+    const nS = this.surfaces.version;
+    this.surfaces.update(frame, this.renderer.xr.getReferenceSpace());
+    if (nS !== this.surfaces.version && !this.note) this._drawToolbar();
     // gesammelte Druecke mit aktueller Pose verarbeiten
     const pend = this.pending; this.pending = [];
     for (const e of pend) {
@@ -627,7 +648,8 @@ export class Room {
       if (g.kind === 'fig') {
         // Figur bleibt aufrecht: nur die Drehung um die Hochachse uebernehmen
         if (quat) { const e = new THREE.Euler().setFromQuaternion(quat, 'YXZ'); g.obj.rotation.set(0, e.y, 0); }
-        if (g.obj.position.y + (g.obj.bottom ?? 0) < this.floorY) g.obj.position.y = this.floorY - g.obj.bottom;   // nicht in den Boden
+        const fb = g.obj.position.y + (g.obj.bottom ?? 0), fs = this._figSupport(g.obj, fb + 0.25);
+        if (fb < fs) g.obj.position.y = fs - g.obj.bottom;   // nicht in Boden oder Moebel
         g.obj.update();
       } else {
         if (quat) g.obj.quaternion.copy(quat);

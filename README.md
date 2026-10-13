@@ -39,14 +39,9 @@ Die Dateien landen im Video-Ordner auf dem Server (Volume `/videos`). **Updates 
 nichts** – ein Video ist erst weg, wenn man es löscht: über das Papierkorb-Symbol auf dem
 Vorschaubild (mit Rückfrage) oder direkt im Ordner auf dem Server.
 
-Hochgeladen wird in 8-MB-Stücken (`upload.js`, nginx-njs) – so passt es auch durch Cloudflare
-(max. 100 MB pro Anfrage). Bricht die Verbindung kurz ab, wird das Stück wiederholt; ein
-abgebrochener Upload derselben Datei macht beim nächsten Mal an der Stelle weiter.
-Halbfertige Teile liegen in `videos/.parts` und werden nach 3 Tagen weggeräumt.
-
 Hochladen geht nur, wenn das Volume beschreibbar ist (ohne `:ro`). Mit `:ro` ist der Knopf
 einfach ausgeblendet. Achtung: Jeder, der die App erreicht, kann hochladen und löschen –
-also nur hinter einer Anmeldung betreiben (z. B. Cloudflare Zero Trust Access).
+also nur im eigenen Netz/VPN oder hinter einer Anmeldung betreiben.
 
 3D-360°-Videos (übereinander/nebeneinander) werden erkannt: in der VR-Brille sieht jedes Auge
 sein eigenes Bild, sonst wird das linke Bild gezeigt.
@@ -108,7 +103,6 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/vr-menu.js` | Steuer-Menü im VR-Modus (Controller-Strahl, Hand-Pinch) |
 | `public/sw.js` | Service Worker: App-Cache pro Version, Video-Cache mit Range-Antworten |
 | `public/vendor/` | three.js (MIT), lokal mitgeliefert, damit alles offline geht |
-| `upload.js` | Hochladen in Stücken (nginx-njs), Fortsetzen nach Abbruch |
 | `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`), Hochladen/Löschen (`/upload/`) |
 | `docker-entrypoint.sh` | setzt die Version beim Start |
 

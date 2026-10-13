@@ -31,3 +31,6 @@ h1 { margin: 4px 0 0; font-size: 44px; letter-spacing: .02em; background: linear
 .pdel { font: inherit; border: 0; border-radius: 12px; width: 44px; background: #33284a; color: var(--text); cursor: pointer; }
 .pdel:disabled { opacity: .35; }
 .btn.small { font-size: 15px; padding: 8px 12px; width: 100%; }
+.games { display: flex; gap: 6px; background: #1d1729; padding: 5px; border-radius: 999px; margin-bottom: 14px; }
+.games a { flex: 1; padding: 10px; border-radius: 999px; color: var(--muted); text-decoration: none; font-weight: 650; }
+.games a.on { background: linear-gradient(90deg, var(--accent), var(--accent2)); color: #fff; }

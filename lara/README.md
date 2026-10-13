@@ -38,6 +38,24 @@ der etwas unter `lara/` ändert (`.github/workflows/lara.yml`).
 - Werkzeugleiste (Brille, schwebt unten): Kegel hier, Neu aufstellen, Neues Spiel, Kugel holen,
   Beenden. Die Kugel schwebt nach jedem Wurf wieder rechts vor dir.
 
+## Minigolf (`/golf.html`)
+
+- **Dein Raum ist die Bahn:** Boden, Wände und Möbel aus der Quest-Raumeinrichtung (plane-/mesh-
+  detection) werden zu festen Physik-Körpern – die Kugel rollt auf dem Tisch, fällt an der Kante
+  runter und prallt an Wänden und Möbeln ab. Außerhalb des gescannten Bodens ist sie „aus“
+  (+1 Schlag, zurück an die letzte Stelle).
+- **Bauen:** Element in der Leiste wählen und auf Boden oder Möbel zielen: Start, Loch (Fahne),
+  Rampe (Sprung), Looping (braucht Schwung – Boost davor), Boost (schießt die Kugel an), Wand,
+  Bumper (federnd), Sand (bremst stark). Mehrere Löcher: einfach weitere Start/Loch-Paare setzen.
+  „Bewegen“ greift ein Element (Controller-Stick dreht), „Drehen“ dreht um 45°, „Löschen“,
+  „Zufall“ baut eine Bahn mit Hindernissen vor dir, „Karte ▸“ wechselt zwischen Karten.
+  Karten werden gespeichert, relativ zu einem Raum-Anker (stehen beim nächsten Mal wieder da).
+- **Spielen:** Controller oder Hand nach unten halten = Schläger, durch die Kugel schwingen
+  (Schlagstärke aus der Schwunggeschwindigkeit). Handy/Bildschirm: wischen. Maximal 8 Schläge
+  pro Loch, „Loch aufgeben“ setzt 8.
+- **Mehrere Spieler:** gleiche Spielerliste wie beim Bowling; jeder spielt ein Loch, dann der
+  Nächste, dann das nächste Loch. Tafel über dem Loch zeigt alle Schläge.
+
 ## Technik
 
 | Datei | Inhalt |
@@ -45,6 +63,9 @@ der etwas unter `lara/` ändert (`.github/workflows/lara.yml`).
 | `public/lara.js` | Start, WebXR, Eingaben (Hände, Controller, Wischen), Werkzeugleiste, Ablauf |
 | `public/bowling.js` | Physik (cannon-es): Kugel 6 kg/21,6 cm, Kegel 1,55 kg/38 cm aus 5 Formen, Erkennen umgefallener Kegel |
 | `public/score.js` | Bowling-Wertung (Strike, Spare, 10. Frame) und Anzeigetafel für alle Spieler |
+| `public/golf.js` | Minigolf: Bauen, Spielen, Schläger, Karten, Spieler |
+| `public/golf-course.js` | Minigolf-Physik: Elemente, Kugel, Loch, Sand/Boost, Aus |
+| `public/room-scan.js` | Gescannter Raum: Boden, Wände, Möbel als Kisten |
 | `public/sound.js` | Klacken, Rollen, Jubel – alles per WebAudio erzeugt |
 | `public/vendor/` | three.js, cannon-es (lokal, läuft offline) |
 

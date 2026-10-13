@@ -22,6 +22,14 @@ ffmpeg -i quelle.webm -vf scale=3840:1920 -c:v libx264 -preset slow -crf 23 \
 
 > Hinweis: Offline-Speichern braucht HTTPS (oder `localhost`), sonst gibt es keinen Service Worker.
 
+## Steuerung in der VR-Brille
+
+Im VR-Modus schwebt ein eigenes Menü vor dir: Abspielen/Pause, ±10 Sekunden, Fortschrittsbalken
+zum Spulen (Strahl drauf, Abzug halten und ziehen), Ton an/aus, Ausrichten (Videomitte dorthin,
+wo du gerade hinschaust), Ausblenden und VR beenden. Bedienung per Controller-Strahl, Hand-Pinch
+oder Blick+Pinch. **Abzug/Pinch ins Leere** oder die Grifftaste blendet das Menü ein und aus;
+beim Abspielen verschwindet es nach 8 Sekunden ohne Bedienung von selbst.
+
 ## Updates – nie auf altem Code hängen bleiben
 
 - Jeder Build bekommt eine Versionsnummer (`1.0.<Build-Nummer>`). Sie steckt in `sw.js`,
@@ -50,6 +58,7 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 |---|---|
 | `public/index.html`, `style.css`, `app.js` | Oberfläche, Videoliste, Offline-Knopf, Update-Werkzeug |
 | `public/viewer.js` | 360°-Viewer mit three.js (Ziehen, Pinch-Zoom, Sensor, WebXR) |
+| `public/vr-menu.js` | Steuer-Menü im VR-Modus (Controller-Strahl, Hand-Pinch) |
 | `public/sw.js` | Service Worker: App-Cache pro Version, Video-Cache mit Range-Antworten |
 | `public/vendor/` | three.js (MIT), lokal mitgeliefert, damit alles offline geht |
 | `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`) |

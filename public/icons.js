@@ -17,7 +17,13 @@ const P = {
   center_focus_strong: 'M5 15H3v4c0 1.1.9 2 2 2h4v-2H5v-4zM5 5h4V3H5c-1.1 0-2 .9-2 2v4h2V5zm14-2h-4v2h4v4h2V5c0-1.1-.9-2-2-2zm0 16h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4zM12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z',
   vr: 'M21 4H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5l2-3 2 3h9c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM7.5 13C6.67 13 6 12.33 6 11.5S6.67 10 7.5 10s1.5.67 1.5 1.5S8.33 13 7.5 13zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z',
   close: 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
+  fast_rewind: 'M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z',
+  fast_forward: 'M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z',
+  expand_more: 'M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z',
 };
+
+// Rohe Pfade, z. B. fuers Zeichnen auf ein Canvas (VR-Menue)
+export const ICON_PATHS = P;
 
 export function icon(name) {
   const d = P[name] || P.close;

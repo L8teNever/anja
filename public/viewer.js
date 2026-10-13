@@ -2,9 +2,10 @@
 // Bewegungssensor (Handy) oder WebXR (VR-Brille).
 import * as THREE from 'three';
 import { VRButton } from '/vendor/VRButton.js';
+import { VRMenu } from '/vr-menu.js';
 
 export class Viewer {
-  constructor(container, video) {
+  constructor(container, video, { title = '' } = {}) {
     this.container = container;
     this.video = video;
     this.lon = 0; this.lat = 0; this.fov = 75;
@@ -27,6 +28,13 @@ export class Viewer {
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: this.texture }));
     this.scene.add(this.mesh);
+
+    // Steuer-Menue in der VR-Brille
+    this.vrMenu = new VRMenu({
+      renderer: this.renderer, scene: this.scene, video, title,
+      onRecenter: () => this._recenterXR(),
+    });
+    this.renderer.xr.addEventListener('sessionend', () => { this.mesh.rotation.y = 0; });
 
     this._bindInput();
     this._onResize = () => this.resize();
@@ -55,6 +63,13 @@ export class Viewer {
     this.lat = 0;
     if (this.gyro && this.orient) this.gyroOffset = -this._gyroYawDeg();
     else this.lon = 0;
+  }
+
+  // In VR: Videomitte dorthin drehen, wo man gerade hinschaut
+  _recenterXR() {
+    const cam = this.renderer.xr.getCamera();
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld));
+    this.mesh.rotation.y = Math.atan2(-dir.x, -dir.z);
   }
 
   async setGyro(on) {
@@ -128,6 +143,7 @@ export class Viewer {
   _frame() {
     if (this.renderer.xr.isPresenting) {
       // In VR steuert die Brille die Kamera
+      this.vrMenu.update();
       this.renderer.render(this.scene, this.camera);
       return;
     }
@@ -149,6 +165,7 @@ export class Viewer {
   dispose() {
     this.setGyro(false);
     this.renderer.setAnimationLoop(null);
+    this.vrMenu.dispose();
     window.removeEventListener('resize', this._onResize);
     this.texture.dispose();
     this.mesh.geometry.dispose();

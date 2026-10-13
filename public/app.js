@@ -309,7 +309,7 @@ async function openPlayer(src, title) {
   video.loop = true;
   video.preload = 'auto';
 
-  viewer = new Viewer($('stage'), video);
+  viewer = new Viewer($('stage'), video, { title });
   const hint = $('tap-hint'); hint.classList.remove('gone');
   viewer.onInteract = () => hint.classList.add('gone');
   setTimeout(() => hint.classList.add('gone'), 4000);

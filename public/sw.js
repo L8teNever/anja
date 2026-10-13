@@ -15,6 +15,7 @@ const SHELL = [
   `/style.css?v=${VERSION}`,
   `/app.js?v=${VERSION}`,
   '/viewer.js',
+  '/vr-menu.js',
   '/icons.js',
   '/vendor/three.module.min.js',
   '/vendor/VRButton.js',

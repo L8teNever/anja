@@ -7,7 +7,7 @@ Knopf **offline speichern** und läuft danach ohne Internet weiter, inklusive Sp
 ## Starten
 
 ```sh
-docker run -d --name anja -p 8080:80 -v "$PWD/videos:/videos:ro" ghcr.io/l8tenever/anja:latest
+docker run -d --name anja -p 8080:80 -v "$PWD/videos:/videos" ghcr.io/l8tenever/anja:latest
 ```
 
 oder mit `compose.example.yaml`. Danach `http://localhost:8080` öffnen.
@@ -21,6 +21,30 @@ ffmpeg -i quelle.webm -vf scale=3840:1920 -c:v libx264 -preset slow -crf 23 \
 ```
 
 > Hinweis: Offline-Speichern braucht HTTPS (oder `localhost`), sonst gibt es keinen Service Worker.
+
+## Videos hochladen
+
+Oben auf den lila Pfeil tippen (oder am PC ein Video ins Fenster ziehen). Erlaubt sind `.mp4`,
+`.m4v`, `.webm` und `.mov`. Vor dem Hochladen prüft die App:
+
+- ob das Gerät das Video abspielen kann (Warnung z. B. bei HEVC/H.265),
+- ob es ein 360°-Format ist: 2:1 normal, 1:1 = 3D übereinander, 4:1 = 3D nebeneinander –
+  sonst kommt eine Warnung,
+- und macht aus einem Bild des Videos automatisch das Vorschaubild (`.jpg`).
+
+Der Dateiname wird bereinigt (Umlaute → ae/oe/ue, Sonderzeichen raus), gleiche Namen bekommen
+`-2`, `-3` … Fortschritt, Tempo und Restzeit werden angezeigt, der Bildschirm bleibt dabei an.
+
+Die Dateien landen im Video-Ordner auf dem Server (Volume `/videos`). **Updates ändern daran
+nichts** – ein Video ist erst weg, wenn man es löscht: über das Papierkorb-Symbol auf dem
+Vorschaubild (mit Rückfrage) oder direkt im Ordner auf dem Server.
+
+Hochladen geht nur, wenn das Volume beschreibbar ist (ohne `:ro`). Mit `:ro` ist der Knopf
+einfach ausgeblendet. Achtung: Jeder, der die App erreicht, kann hochladen und löschen –
+also nur im eigenen Netz/VPN oder hinter einer Anmeldung betreiben.
+
+3D-360°-Videos (übereinander/nebeneinander) werden erkannt: in der VR-Brille sieht jedes Auge
+sein eigenes Bild, sonst wird das linke Bild gezeigt.
 
 ## Steuerung in der VR-Brille
 
@@ -56,12 +80,12 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 
 | Datei | Zweck |
 |---|---|
-| `public/index.html`, `style.css`, `app.js` | Oberfläche, Videoliste, Offline-Knopf, Update-Werkzeug |
+| `public/index.html`, `style.css`, `app.js` | Oberfläche, Videoliste, Hochladen, Offline-Knopf, Update-Werkzeug |
 | `public/viewer.js` | 360°-Viewer mit three.js (Ziehen, Pinch-Zoom, Sensor, WebXR) |
 | `public/vr-menu.js` | Steuer-Menü im VR-Modus (Controller-Strahl, Hand-Pinch) |
 | `public/sw.js` | Service Worker: App-Cache pro Version, Video-Cache mit Range-Antworten |
 | `public/vendor/` | three.js (MIT), lokal mitgeliefert, damit alles offline geht |
-| `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`) |
+| `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`), Hochladen/Löschen (`/upload/`) |
 | `docker-entrypoint.sh` | setzt die Version beim Start |
 
 Lizenz der Beispielvideos: siehe jeweilige Quelle. three.js © three.js authors, MIT.

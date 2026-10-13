@@ -22,12 +22,19 @@ export class Viewer {
     this.camera = new THREE.PerspectiveCamera(this.fov, 1, 0.1, 1100);
     this.camera.rotation.order = 'YXZ';
 
-    const geo = new THREE.SphereGeometry(500, 96, 64);
-    geo.scale(-1, 1, 1); // von innen sichtbar
     this.texture = new THREE.VideoTexture(video);
     this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: this.texture }));
+    this.material = new THREE.MeshBasicMaterial({ map: this.texture });
+    // Alle Video-Kugeln haengen an einer Gruppe, damit "Ausrichten" alle dreht
+    this.mesh = new THREE.Group();
     this.scene.add(this.mesh);
+    this._setLayout('mono');
+    // 3D-360°-Videos erkennen: 1:1 = uebereinander (oben links), 4:1 = nebeneinander
+    this._onMeta = () => {
+      const r = video.videoWidth / video.videoHeight;
+      this._setLayout(Math.abs(r - 1) < 0.08 ? 'tb' : r > 3 ? 'lr' : 'mono');
+    };
+    video.addEventListener('loadedmetadata', this._onMeta);
 
     // Steuer-Menue in der VR-Brille
     this.vrMenu = new VRMenu({
@@ -41,6 +48,26 @@ export class Viewer {
     window.addEventListener('resize', this._onResize);
     this.resize();
     this.renderer.setAnimationLoop(() => this._frame());
+  }
+
+  // Pro Auge eine Kugel mit passendem Bildausschnitt. Ebene 1 = linkes Auge (auch fuer
+  // die normale Ansicht), Ebene 2 = rechtes Auge; three.js ordnet sie in VR automatisch zu.
+  _setLayout(layout) {
+    if (this.layout === layout) return;
+    this.layout = layout;
+    for (const m of [...this.mesh.children]) { m.geometry.dispose(); this.mesh.remove(m); }
+    const eye = (u0, v0, su, sv, layer) => {
+      const geo = new THREE.SphereGeometry(500, 96, 64);
+      geo.scale(-1, 1, 1); // von innen sichtbar
+      const uv = geo.attributes.uv;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, u0 + uv.getX(i) * su, v0 + uv.getY(i) * sv);
+      const m = new THREE.Mesh(geo, this.material);
+      m.layers.set(layer);
+      this.mesh.add(m);
+    };
+    if (layout === 'tb') { eye(0, 0.5, 1, 0.5, 1); eye(0, 0, 1, 0.5, 2); }
+    else if (layout === 'lr') { eye(0, 0, 0.5, 1, 1); eye(0.5, 0, 0.5, 1, 2); }
+    else { eye(0, 0, 1, 1, 0); }
   }
 
   vrButton() {
@@ -143,10 +170,14 @@ export class Viewer {
   _frame() {
     if (this.renderer.xr.isPresenting) {
       // In VR steuert die Brille die Kamera
+      // three.js gibt dem linken Auge Ebene 1, dem rechten Ebene 2 – die normale Kamera
+      // darf Ebene 1 hier nicht haben, sonst saehe das rechte Auge beide Bilder
+      this.camera.layers.disable(1);
       this.vrMenu.update();
       this.renderer.render(this.scene, this.camera);
       return;
     }
+    this.camera.layers.enable(1); // 3D-Videos: ausserhalb von VR das linke Auge zeigen
     if (this.gyro && this.orient) {
       const deg = THREE.MathUtils.degToRad;
       const euler = new THREE.Euler(deg(this.orient.beta), deg(this.orient.alpha + this.gyroOffset), -deg(this.orient.gamma), 'YXZ');
@@ -168,8 +199,9 @@ export class Viewer {
     this.vrMenu.dispose();
     window.removeEventListener('resize', this._onResize);
     this.texture.dispose();
-    this.mesh.geometry.dispose();
-    this.mesh.material.dispose();
+    this.video.removeEventListener('loadedmetadata', this._onMeta);
+    for (const m of this.mesh.children) m.geometry.dispose();
+    this.material.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }

@@ -13,5 +13,16 @@ cp -a "$SRC"/. "$ROOT"/
 for f in sw.js app.js index.html; do
   sed -i "s/__APP_VERSION__/$V/g" "$ROOT/$f"
 done
-printf '{"version":"%s"}\n' "$V" > "$ROOT/version.json"
 echo "Anja Version $V"
+
+# Hochladen braucht einen beschreibbaren Video-Ordner (Volume ohne ":ro")
+if touch /videos/.anja-write-test 2>/dev/null; then
+  rm -f /videos/.anja-write-test
+  chown nginx:nginx /videos 2>/dev/null || chmod 777 /videos
+  echo "Anja: Hochladen aktiv"
+  UPLOAD=true
+else
+  echo "Anja: /videos ist schreibgeschuetzt - Hochladen deaktiviert"
+  UPLOAD=false
+fi
+printf '{"version":"%s","upload":%s}\n' "$V" "$UPLOAD" > "$ROOT/version.json"

@@ -6,4 +6,4 @@ services:
     ports:
       - "8080:80"          # http://localhost:8080
     volumes:
-      - ./videos:/videos:ro
+      - ./videos:/videos      # beschreibbar, damit Hochladen geht

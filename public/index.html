@@ -35,6 +35,8 @@
       </div>
       <div class="top-actions">
         <span id="net" class="chip" title="Verbindung">online</span>
+        <button id="up-btn" class="round accent" aria-label="Video hochladen" title="360°-Video hochladen" hidden><span class="material">upload</span></button>
+        <input id="up-file" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.m4v,.webm,.mov" multiple hidden>
         <button id="menu-btn" class="round" aria-label="Menü"><span class="material">more_vert</span></button>
       </div>
     </header>
@@ -43,6 +45,8 @@
       <div class="storage-row"><span>Offline gespeichert</span><span id="storage-text">–</span></div>
       <div class="bar"><div id="storage-bar"></div></div>
     </section>
+
+    <section id="uploads" class="uploads" hidden></section>
 
     <section id="list" class="list" aria-live="polite">
       <div class="empty">Lade Videos…</div>

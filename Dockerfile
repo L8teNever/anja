@@ -5,11 +5,13 @@ ARG APP_VERSION=dev
 ENV APP_VERSION=${APP_VERSION}
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY upload.js /etc/nginx/upload.js
 # Unveraenderte Vorlage; der Start kopiert sie frisch nach /usr/share/nginx/html
 COPY public/ /opt/anja/public/
 COPY docker-entrypoint.sh /docker-entrypoint.d/40-anja-version.sh
 
 RUN chmod +x /docker-entrypoint.d/40-anja-version.sh \
+ && sed -i '1i load_module modules/ngx_http_js_module.so;' /etc/nginx/nginx.conf \
  && date +%s > /opt/anja/build-id \
  && mkdir -p /videos
 

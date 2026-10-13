@@ -36,7 +36,7 @@
       <div class="top-actions">
         <span id="net" class="chip" title="Verbindung">online</span>
         <button id="up-btn" class="round accent" aria-label="Video hochladen" title="360°-Video hochladen" hidden><span class="material">upload</span></button>
-        <input id="up-file" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.m4v,.webm,.mov" multiple hidden>
+        <input id="up-file" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.m4v,.webm,.mov,.mkv" multiple hidden>
         <button id="menu-btn" class="round" aria-label="Menü"><span class="material">more_vert</span></button>
       </div>
     </header>
@@ -77,22 +77,39 @@
       <div id="p-title" class="p-title glass">Video</div>
       <div class="p-top-right">
         <button id="p-gyro" class="round glass" aria-label="Bewegungssensor"><span class="material">screen_rotation</span></button>
+        <button id="p-fmt" class="round glass" aria-label="Videoformat" title="Videoformat (360°, 180°, 3D …)"><span class="material">language</span></button>
         <button id="p-key" class="round glass" aria-label="Greenscreen" title="Greenscreen / Durchsicht"><span class="material">layers</span></button>
         <span id="vr-slot"></span>
         <span id="ar-slot"></span>
       </div>
     </div>
+    <div id="fmt-panel" class="key-panel glass" hidden>
+      <div class="kp-head"><b>Videoformat</b><button id="fp-close" class="round" aria-label="Schließen"><span class="material">close</span></button></div>
+      <label class="kp-row"><span>Projektion</span><select id="fp-kind" class="sel"></select></label>
+      <label class="kp-row"><span>3D</span><select id="fp-stereo" class="sel"></select></label>
+      <label class="kp-row" id="fp-swap-row"><span>Augen tauschen</span><input id="fp-swap" type="checkbox" class="sw"></label>
+      <label class="kp-slider" id="fp-fov-row"><span>Blickwinkel <b id="fp-fov-val"></b></span><input id="fp-fov" type="range" min="40" max="240" step="1"></label>
+      <div class="kp-foot"><button id="fp-save" class="pill pill-accent">Für alle speichern</button><button id="fp-auto" class="pill">Automatisch</button></div>
+      <small id="fp-src" class="fp-src"></small>
+    </div>
+
     <div id="key-panel" class="key-panel glass" hidden>
       <div class="kp-head"><b>Greenscreen</b><button id="kp-close" class="round" aria-label="Schließen"><span class="material">close</span></button></div>
-      <label class="kp-row"><span>Grün durchsichtig machen</span><input id="kp-on" type="checkbox" class="sw"></label>
+      <label class="kp-row"><span>Hintergrund durchsichtig</span><input id="kp-on" type="checkbox" class="sw"></label>
       <label class="kp-row" id="kp-cam-row"><span>Handy-Kamera dahinter</span><input id="kp-cam" type="checkbox" class="sw"></label>
       <div class="kp-row"><span>Farbe</span>
         <span class="kp-color"><input id="kp-color" type="color" value="#00ff00">
-        <button id="kp-pick" class="pill">Aus Video wählen</button></span></div>
-      <label class="kp-slider"><span>Toleranz</span><input id="kp-sim" type="range" min="0.02" max="0.45" step="0.005"></label>
-      <label class="kp-slider"><span>Weiche Kante</span><input id="kp-smooth" type="range" min="0" max="0.3" step="0.005"></label>
-      <label class="kp-slider"><span>Grünstich weg</span><input id="kp-spill" type="range" min="0" max="1" step="0.01"></label>
-      <div class="kp-foot"><button id="kp-reset" class="pill">Standard</button><small id="kp-hint"></small></div>
+        <button id="kp-pick" class="pill">Pipette</button><button id="kp-auto" class="pill pill-accent">Auto</button></span></div>
+      <label class="kp-slider"><span>Farbton-Bereich <b id="kv-hue"></b></span><input id="kp-hue" type="range" min="4" max="70" step="1"></label>
+      <label class="kp-slider"><span>Mindest-Sättigung <b id="kv-sat"></b></span><input id="kp-sat" type="range" min="0" max="0.3" step="0.005"></label>
+      <label class="kp-slider"><span>Weiche Kante <b id="kv-soft"></b></span><input id="kp-soft" type="range" min="0" max="0.6" step="0.01"></label>
+      <label class="kp-slider"><span>Kante schrumpfen <b id="kv-choke"></b></span><input id="kp-choke" type="range" min="0" max="6" step="0.5"></label>
+      <label class="kp-slider"><span>Grünstich weg <b id="kv-spill"></b></span><input id="kp-spill" type="range" min="0" max="1" step="0.01"></label>
+      <label class="kp-slider"><span>Helligkeit ab <b id="kv-lumMin"></b></span><input id="kp-lumMin" type="range" min="0" max="0.8" step="0.01"></label>
+      <label class="kp-slider"><span>Helligkeit bis <b id="kv-lumMax"></b></span><input id="kp-lumMax" type="range" min="0.2" max="1" step="0.01"></label>
+      <label class="kp-row"><span>Maske zeigen <small>(weiß = bleibt, schwarz = weg)</small></span><input id="kp-mask" type="checkbox" class="sw"></label>
+      <div class="kp-foot"><button id="kp-reset" class="pill">Standard</button><button id="kp-save" class="pill">Für alle speichern</button></div>
+      <small id="kp-hint" class="fp-src"></small>
     </div>
 
     <div class="p-bottom glass">

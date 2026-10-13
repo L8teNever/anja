@@ -16,6 +16,7 @@ const SHELL = [
   `/app.js?v=${VERSION}`,
   '/viewer.js',
   '/vr-menu.js',
+  '/projection.js',
   '/icons.js',
   '/vendor/three.module.min.js',
   '/vendor/VRButton.js',
@@ -91,8 +92,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // Versions-Check und Worker selbst: immer frisch vom Server
-  if (url.pathname === '/version.json' || url.pathname === '/sw.js') return;
+  // Versions-Check, Worker selbst und Hochladen: immer direkt zum Server
+  if (url.pathname === '/version.json' || url.pathname === '/sw.js' || url.pathname.startsWith('/upload')) return;
 
   // Videoliste: Netz zuerst, offline die letzte bekannte Liste
   if (url.pathname === '/videos/') {

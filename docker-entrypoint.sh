@@ -19,6 +19,9 @@ echo "Anja Version $V"
 if touch /videos/.anja-write-test 2>/dev/null; then
   rm -f /videos/.anja-write-test
   chown nginx:nginx /videos 2>/dev/null || chmod 777 /videos
+  mkdir -p /videos/.parts && chown nginx:nginx /videos/.parts 2>/dev/null || true
+  # abgebrochene Uploads nach 7 Tagen wegraeumen
+  find /videos/.parts -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
   echo "Anja: Hochladen aktiv"
   UPLOAD=true
 else

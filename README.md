@@ -12,7 +12,7 @@ docker run -d --name anja -p 8080:80 -v "$PWD/videos:/videos" ghcr.io/l8tenever/
 
 oder mit `compose.example.yaml`. Danach `http://localhost:8080` öffnen.
 
-Videos (`.mp4`, `.m4v`, `.webm`) einfach in den Ordner `videos/` legen. Ein gleichnamiges
+Videos (`.mp4`, `.m4v`, `.webm`, `.mov`, `.mkv`) einfach in den Ordner `videos/` legen. Ein gleichnamiges
 `.jpg` daneben wird als Vorschaubild genutzt. Für Handys am besten H.264-MP4, z. B.:
 
 ```sh
@@ -32,6 +32,12 @@ Oben auf den lila Pfeil tippen (oder am PC ein Video ins Fenster ziehen). Erlaub
   sonst kommt eine Warnung,
 - und macht aus einem Bild des Videos automatisch das Vorschaubild (`.jpg`).
 
+Große Videos gehen in 16-MB-Stücken hoch, drei gleichzeitig (schneller, und es passt durch
+Cloudflare). Bricht die Verbindung ab oder geht das Handy schlafen, wird automatisch neu
+versucht. Wird die Seite geschlossen, merkt sich die App den Upload: beim nächsten Öffnen
+steht er als „pausiert“ da, und wählt man dieselbe Datei nochmal, geht es genau dort weiter.
+Halbfertiges liegt in `videos/.parts` und wird nach 7 Tagen weggeräumt.
+
 Der Dateiname wird bereinigt (Umlaute → ae/oe/ue, Sonderzeichen raus), gleiche Namen bekommen
 `-2`, `-3` … Fortschritt, Tempo und Restzeit werden angezeigt, der Bildschirm bleibt dabei an.
 
@@ -46,15 +52,40 @@ also nur im eigenen Netz/VPN oder hinter einer Anmeldung betreiben.
 3D-360°-Videos (übereinander/nebeneinander) werden erkannt: in der VR-Brille sieht jedes Auge
 sein eigenes Bild, sonst wird das linke Bild gezeigt.
 
+## Alle 360°-Formate
+
+Die App erkennt das Format selbst und rechnet es auf der Grafikkarte richtig um
+(Formeln wie ffmpeg `v360`, siehe `public/projection.js`):
+
+| Format | Typisch |
+|---|---|
+| 360° equirektangular (2:1) | die meisten 360°-Kameras/Exporte |
+| 180° / VR180 | VR180-Kameras, viele VR-Filme |
+| 3D übereinander / nebeneinander (auch Augen vertauscht) | 3D-360° und 3D-180° |
+| Fischauge (180–220°, mono oder 3D) | VR180-Rohmaterial, `_MKX200`, `_FISHEYE190` |
+| Doppel-Fischauge 360° | Rohdateien von 360°-Kameras |
+| YouTube-Würfel (EAC), Würfel 3×2 / 6×1 / 1×6 | YouTube-Downloads, Cubemaps |
+| Flach | normale Videos als Kino-Leinwand |
+
+Erkennung in dieser Reihenfolge: für alle gespeichert (`<name>.json` neben dem Video) →
+auf dem Gerät gemerkt → Dateiname (`_180_LR`, `_TB`, `_360`, `_EAC` …) → Metadaten im
+Video (Google Spatial Media in MP4, StereoMode/Projection in MKV/WebM) → Bildanalyse
+(Seitenverhältnis, Vergleich der Bildhälften, schwarze Fischaugen-Ecken). Im Player
+(Globus-Symbol) lässt sich alles von Hand umstellen und „für alle speichern“.
+Beim Hochladen wird das Format gleich erkannt, mitgespeichert und das Vorschaubild
+in jedem Format richtig erzeugt.
+
 ## Greenscreen & Durchsicht (dein Zimmer hinter dem Video)
 
 Im Player oben auf das Ebenen-Symbol tippen:
 
-- **Grün durchsichtig machen** – alles in der Schlüsselfarbe wird ausgestanzt (Vergleich nach
-  Farbton, Schatten auf dem Grün gehen mit weg). Videos mit „green“, „gruen“, „chroma“ oder
-  „keying“ im Namen starten automatisch mit Greenscreen.
-- **Farbe / Aus Video wählen** – Pipette: einmal ins Video auf das Grün tippen.
-- **Toleranz, Weiche Kante, Grünstich weg** – Feinabstimmung; wird pro Video gespeichert.
+- **Hintergrund durchsichtig** – ausgestanzt wird nach Farbton, Farbstärke und Helligkeit,
+  so klappt auch blasses/helles Grün, Haut, Weiß und Grau bleiben stehen. Videos mit
+  „green“, „gruen“, „chroma“ oder „keying“ im Namen starten automatisch mit Greenscreen.
+- **Auto** sucht die Hintergrundfarbe selbst, **Pipette**: einmal ins Video aufs Grün tippen.
+- **Farbton-Bereich, Mindest-Sättigung, Weiche Kante, Kante schrumpfen, Grünstich weg,
+  Helligkeit ab/bis** – Feinabstimmung. **Maske zeigen** (weiß bleibt, schwarz weg) hilft
+  beim Einstellen. Gemerkt pro Video und Gerät, „Für alle speichern“ legt es auf den Server.
 - **Handy-Kamera dahinter** – am Handy läuft das Bild der Rückkamera hinter dem Video,
   der Bewegungssensor geht dabei mit an.
 - **Durchsicht** (Knopf oben, nur wenn das Gerät WebXR-AR kann, z. B. Meta Quest oder
@@ -103,6 +134,8 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/vr-menu.js` | Steuer-Menü im VR-Modus (Controller-Strahl, Hand-Pinch) |
 | `public/sw.js` | Service Worker: App-Cache pro Version, Video-Cache mit Range-Antworten |
 | `public/vendor/` | three.js (MIT), lokal mitgeliefert, damit alles offline geht |
+| `public/projection.js` | Formate: Erkennung, Umrechnung, Vorschaubilder, Greenscreen-Auto |
+| `upload.js` | Hochladen in Stücken mit Fortsetzen (nginx-njs) |
 | `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`), Hochladen/Löschen (`/upload/`) |
 | `docker-entrypoint.sh` | setzt die Version beim Start |
 

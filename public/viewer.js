@@ -1,8 +1,149 @@
-// 360°-Viewer: Video als Textur innen auf einer Kugel, Blick per Ziehen,
+// 360°-Viewer: Video innen auf einer Kugel, alle gaengigen 360°/180°/3D-Formate, Blick per Ziehen,
 // Bewegungssensor (Handy) oder WebXR (VR-Brille).
 import * as THREE from 'three';
 import { VRButton } from '/vendor/VRButton.js';
 import { VRMenu } from '/vr-menu.js';
+import { DEFAULT_FORMAT, CHROMA_DEFAULT, normalize, params, dirToUV, fromSize } from '/projection.js';
+
+
+const VERT = `
+varying vec3 vDir;
+void main() {
+  vDir = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+// Gleiche Rechnung wie dirToUV() in projection.js
+const FRAG = `
+uniform sampler2D map;
+uniform int uProj, uStereo;
+uniform vec2 uRange, uGrid, uTexSize;
+uniform int uFacePos[6];
+uniform int uFaceRot[6];
+uniform float uSwap, uWrap, uEye;
+uniform float uKeyOn, uKeyMask; uniform vec3 uKey;
+uniform float uKeyHue, uKeySat, uKeySoft, uKeyChoke, uKeySpill, uKeyLumMin, uKeyLumMax;
+varying vec3 vDir;
+const float PI = 3.141592653589793;
+
+vec2 anjaCbCr(vec3 c) { float y = dot(c, vec3(0.299, 0.587, 0.114)); return vec2((c.b - y) * 0.565, (c.r - y) * 0.713); }
+
+bool toUV(vec3 d, out vec2 uv) {
+  vec3 n = normalize(vec3(d.x, -d.y, -d.z));   // wie ffmpeg: x rechts, y unten, z vorne
+  float x = n.x, y = n.y, z = n.z;
+  float u, w;
+  if (uProj == 0) {            // equirektangular (360/180)
+    u = 0.5 * (atan(x, z) / uRange.x) + 0.5;
+    w = 0.5 * (asin(clamp(y, -1.0, 1.0)) / uRange.y) + 0.5;
+    if (uWrap > 0.5) u = fract(u);
+    if (u < 0.0 || u > 1.0 || w < 0.0 || w > 1.0) return false;
+  } else if (uProj == 1) {     // Leinwand
+    if (z <= 1e-6) return false;
+    u = 0.5 * ((x / z) / uRange.x) + 0.5;
+    w = 0.5 * ((y / z) / uRange.y) + 0.5;
+    if (u < 0.0 || u > 1.0 || w < 0.0 || w > 1.0) return false;
+  } else if (uProj == 2) {     // Fischauge
+    float h = length(vec2(x, y)); float lh = h > 0.0 ? h : 1.0;
+    float phi = atan(h, z) / PI;
+    float uf = (x / lh) * phi / uRange.x, vf = (y / lh) * phi / uRange.y;
+    if (abs(uf) >= 0.5 || abs(vf) >= 0.5) return false;
+    u = uf + 0.5; w = vf + 0.5;
+  } else if (uProj == 3) {     // Doppel-Fischauge
+    float h = length(vec2(x, y)); float lh = h > 0.0 ? h : 1.0;
+    float t = acos(min(1.0, abs(z))) / PI;
+    float uh = clamp(0.5 * (t * (x / lh) / uRange.x) + 0.5, 0.0, 1.0);
+    w = clamp(0.5 * (t * (y / lh) / uRange.y) + 0.5, 0.0, 1.0);
+    u = z >= 0.0 ? 0.5 + 0.5 * uh : 0.5 * (1.0 - uh);
+  } else {                     // Wuerfel / EAC
+    float phi = atan(x, z), theta = asin(clamp(y, -1.0, 1.0));
+    float Q = PI / 4.0, H = PI / 2.0, pn;
+    int dir;
+    if (phi >= -Q && phi < Q) { dir = 4; pn = phi; }
+    else if (phi >= -(H + Q) && phi < -Q) { dir = 1; pn = phi + H; }
+    else if (phi >= Q && phi < H + Q) { dir = 0; pn = phi - H; }
+    else { dir = 5; pn = phi + (phi > 0.0 ? -PI : PI); }
+    float th = atan(cos(pn));
+    if (theta > th) dir = 3; else if (theta < -th) dir = 2;
+    float uf, vf;
+    if (dir == 0) { uf = -z / x; vf = y / x; }
+    else if (dir == 1) { uf = -z / x; vf = -y / x; }
+    else if (dir == 2) { uf = -x / y; vf = -z / y; }
+    else if (dir == 3) { uf = x / y; vf = -z / y; }
+    else if (dir == 4) { uf = x / z; vf = y / z; }
+    else { uf = x / z; vf = -y / z; }
+    int pos = uFacePos[dir];
+    int r = uFaceRot[pos];
+    float t;
+    if (r == 1) { t = uf; uf = -vf; vf = t; }
+    else if (r == 2) { uf = -uf; vf = -vf; }
+    else if (r == 3) { t = uf; uf = vf; vf = -t; }
+    float cols = uGrid.x, rows = uGrid.y;
+    float col = mod(float(pos), cols), row = floor(float(pos) / cols);
+    if (uProj == 5) {
+      uf = (2.0 / PI) * atan(uf) + 0.5; vf = (2.0 / PI) * atan(vf) + 0.5;
+      vec2 pad = 2.0 / uTexSize;
+      u = ((uf + col) * (1.0 - 2.0 * pad.x)) / 3.0 + pad.x;
+      w = vf * (0.5 - 2.0 * pad.y) + pad.y + 0.5 * row;
+    } else {
+      u = (col + 0.5 * uf + 0.5) / cols;
+      w = (row + 0.5 * vf + 0.5) / rows;
+    }
+  }
+  float e = uSwap > 0.5 ? 1.0 - uEye : uEye;
+  if (uStereo == 1) w = 0.5 * w + 0.5 * e;
+  else if (uStereo == 2) u = 0.5 * u + 0.5 * e;
+  uv = vec2(u, 1.0 - w);
+  return true;
+}
+
+// Greenscreen: wie stark gehoert ein Pixel zum Hintergrund? (0 = Vordergrund, 1 = weg)
+// Gemessen am Farbton (Winkel in der CbCr-Ebene), an der Saettigung (Farbstaerke) und an
+// der Helligkeit – so klappt auch blasses/helles Gruen, waehrend
+// Haut, Weiss und Grau sicher stehen bleiben.
+// three.js liefert Video-Texturen als sRGB (nicht linear) -> hier selbst umrechnen
+vec3 srgbToLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
+
+float keyness(vec3 srgb) {
+  vec2 c = anjaCbCr(srgb), k = anjaCbCr(uKey);
+  float kl = max(length(k), 0.02), cl = length(c);
+  float ang = cl > 1e-4 ? acos(clamp(dot(c / cl, k / kl), -1.0, 1.0)) : PI;
+  float hue = 1.0 - smoothstep(uKeyHue, uKeyHue + 0.05 + uKeySoft * 1.2, ang);
+  float sat = smoothstep(uKeySat, uKeySat + 0.004 + uKeySoft * 0.12, cl);
+  float y = dot(srgb, vec3(0.299, 0.587, 0.114));
+  float lum = smoothstep(uKeyLumMin - 0.04, uKeyLumMin, y) * (1.0 - smoothstep(uKeyLumMax, uKeyLumMax + 0.04, y));
+  return hue * sat * lum;
+}
+
+void main() {
+  vec2 uv;
+  if (!toUV(vDir, uv)) { gl_FragColor = vec4(0.0); return; }
+  vec4 c = texture2D(map, uv);
+  if (uKeyOn > 0.5) {
+    float a = 1.0 - keyness(c.rgb);
+    // Kante schrumpfen: auch die Nachbarn duerfen den Pixel "wegnehmen"
+    if (uKeyChoke > 0.0) {
+      vec2 o = uKeyChoke / uTexSize;
+      a = min(a, 1.0 - keyness(texture2D(map, uv + vec2(o.x, 0.0)).rgb));
+      a = min(a, 1.0 - keyness(texture2D(map, uv - vec2(o.x, 0.0)).rgb));
+      a = min(a, 1.0 - keyness(texture2D(map, uv + vec2(0.0, o.y)).rgb));
+      a = min(a, 1.0 - keyness(texture2D(map, uv - vec2(0.0, o.y)).rgb));
+    }
+    // Gruenstich: den Farbanteil in Richtung Schluesselfarbe herausnehmen (Helligkeit bleibt)
+    vec3 srgb = c.rgb;
+    vec2 cc = anjaCbCr(srgb), kd = normalize(anjaCbCr(uKey) + vec2(1e-5));
+    float y = dot(srgb, vec3(0.299, 0.587, 0.114));
+    float along = max(0.0, dot(cc, kd));
+    cc -= kd * along * uKeySpill;
+    vec3 fixedC = vec3(y + cc.y / 0.713, 0.0, y + cc.x / 0.565);
+    fixedC.g = (y - 0.299 * fixedC.r - 0.114 * fixedC.b) / 0.587;
+    c.rgb = clamp(fixedC, 0.0, 1.0);
+    c.a *= a;
+    if (uKeyMask > 0.5) c = vec4(vec3(a), 1.0);
+  }
+  c.rgb = srgbToLinear(c.rgb);
+  gl_FragColor = c;
+  #include <colorspace_fragment>
+}`;
 
 export class Viewer {
   constructor(container, video, { title = '' } = {}) {
@@ -27,16 +168,20 @@ export class Viewer {
 
     this.texture = new THREE.VideoTexture(video);
     this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.material = new THREE.MeshBasicMaterial({ map: this.texture, transparent: true });
-    this._initChroma();
+    this._initMaterial();
     // Alle Video-Kugeln haengen an einer Gruppe, damit "Ausrichten" alle dreht
     this.mesh = new THREE.Group();
     this.scene.add(this.mesh);
-    this._setLayout('mono');
-    // 3D-360°-Videos erkennen: 1:1 = uebereinander (oben links), 4:1 = nebeneinander
+    this._geo = new THREE.SphereGeometry(500, 128, 64);
+    this.format = normalize(DEFAULT_FORMAT);
+    this.formatSource = 'Standard';
+    this.setFormat(this.format, this.formatSource);
+    // Sobald die Bildgroesse bekannt ist: erste Vermutung (wird spaeter durch Dateiname,
+    // Metadaten oder Bildanalyse ersetzt – siehe app.js)
     this._onMeta = () => {
-      const r = video.videoWidth / video.videoHeight;
-      this._setLayout(Math.abs(r - 1) < 0.08 ? 'tb' : r > 3 ? 'lr' : 'mono');
+      this.u.uTexSize.value.set(video.videoWidth, video.videoHeight);
+      if (this.formatSource === 'Standard') this.setFormat(fromSize(video.videoWidth, video.videoHeight), 'Seitenverhältnis');
+      else this.setFormat(this.format, this.formatSource); // Leinwand braucht das Seitenverhaeltnis
     };
     video.addEventListener('loadedmetadata', this._onMeta);
 
@@ -55,74 +200,76 @@ export class Viewer {
     this.renderer.setAnimationLoop(() => this._frame());
   }
 
-  // Pro Auge eine Kugel mit passendem Bildausschnitt. Ebene 1 = linkes Auge (auch fuer
-  // die normale Ansicht), Ebene 2 = rechtes Auge; three.js ordnet sie in VR automatisch zu.
-  _setLayout(layout) {
-    if (this.layout === layout) return;
-    this.layout = layout;
-    for (const m of [...this.mesh.children]) { m.geometry.dispose(); this.mesh.remove(m); }
-    const eye = (u0, v0, su, sv, layer) => {
-      const geo = new THREE.SphereGeometry(500, 96, 64);
-      geo.scale(-1, 1, 1); // von innen sichtbar
-      const uv = geo.attributes.uv;
-      for (let i = 0; i < uv.count; i++) uv.setXY(i, u0 + uv.getX(i) * su, v0 + uv.getY(i) * sv);
-      const m = new THREE.Mesh(geo, this.material);
-      m.rotation.y = -Math.PI / 2; // Bildmitte des Videos liegt vorne (Blickrichtung beim Start)
+  // Ein Shader fuer alle Formate: aus der Blickrichtung wird berechnet, welcher Bildpunkt
+  // des Videos dorthin gehoert (Formeln wie ffmpeg v360, siehe projection.js).
+  // Danach Greenscreen: Pixel nahe der Schluesselfarbe werden durchsichtig (Vergleich im
+  // CbCr-Farbraum, weiche Kante, Gruenstich an den Raendern wird entsaettigt).
+  _initMaterial() {
+    this.u = {
+      map: { value: this.texture },
+      uProj: { value: 0 }, uRange: { value: new THREE.Vector2(Math.PI, Math.PI / 2) },
+      uGrid: { value: new THREE.Vector2(1, 1) },
+      uFacePos: { value: [0, 1, 2, 3, 4, 5] }, uFaceRot: { value: [0, 0, 0, 0, 0, 0] },
+      uStereo: { value: 0 }, uSwap: { value: 0 }, uWrap: { value: 1 },
+      uTexSize: { value: new THREE.Vector2(4096, 2048) },
+      uKeyOn: { value: 0 }, uKeyMask: { value: 0 }, uKey: { value: new THREE.Color(0x00ff00) },   // sRGB-Werte, nicht linear
+      uKeyHue: { value: 0 }, uKeySat: { value: 0 }, uKeySoft: { value: 0 }, uKeyChoke: { value: 0 },
+      uKeySpill: { value: 0 }, uKeyLumMin: { value: 0 }, uKeyLumMax: { value: 1 },
+    };
+    this._chroma = { ...CHROMA_DEFAULT };
+    this.setChroma({}, true);
+  }
+
+  _makeMaterial(eye) {
+    return new THREE.ShaderMaterial({
+      uniforms: { ...this.u, uEye: { value: eye } },
+      vertexShader: VERT, fragmentShader: FRAG,
+      side: THREE.BackSide, transparent: true, depthWrite: false,
+    });
+  }
+
+  // 2D: eine Kugel. 3D: pro Auge eine Kugel – Ebene 1 = linkes Auge (auch fuer die normale
+  // Ansicht), Ebene 2 = rechtes Auge; three.js ordnet sie in VR automatisch zu.
+  _buildMeshes(stereo) {
+    if (this._stereoBuilt === stereo) return;
+    this._stereoBuilt = stereo;
+    for (const m of [...this.mesh.children]) { m.material.dispose(); this.mesh.remove(m); }
+    const add = (eye, layer) => {
+      const m = new THREE.Mesh(this._geo, this._makeMaterial(eye));
       m.layers.set(layer);
       this.mesh.add(m);
     };
-    if (layout === 'tb') { eye(0, 0.5, 1, 0.5, 1); eye(0, 0, 1, 0.5, 2); }
-    else if (layout === 'lr') { eye(0, 0, 0.5, 1, 1); eye(0.5, 0, 0.5, 1, 2); }
-    else { eye(0, 0, 1, 1, 0); }
+    if (stereo) { add(0, 1); add(1, 2); } else add(0, 0);
   }
 
-  // Greenscreen: Pixel nahe an der Schluesselfarbe werden durchsichtig.
-  // Vergleich im CbCr-Farbraum (Helligkeit egal -> Schatten auf dem Gruen gehen mit weg),
-  // weiche Kante per smoothstep, Gruenstich an den Raendern wird entsaettigt.
-  _initChroma() {
-    this.chroma = {
-      on: { value: 0 },
-      key: { value: new THREE.Color(0x00ff00) },   // sRGB-Werte, nicht linear
-      sim: { value: 0.18 },
-      smooth: { value: 0.08 },
-      spill: { value: 0.5 },
-    };
-    const u = this.chroma;
-    this.material.customProgramCacheKey = () => 'anja-chroma';
-    this.material.onBeforeCompile = (sh) => {
-      sh.uniforms.uKeyOn = u.on; sh.uniforms.uKey = u.key;
-      sh.uniforms.uKeySim = u.sim; sh.uniforms.uKeySmooth = u.smooth; sh.uniforms.uKeySpill = u.spill;
-      sh.fragmentShader = `uniform float uKeyOn; uniform vec3 uKey; uniform float uKeySim, uKeySmooth, uKeySpill;
-vec2 anjaCbCr(vec3 c) { float y = dot(c, vec3(0.299, 0.587, 0.114)); return vec2((c.b - y) * 0.565, (c.r - y) * 0.713); }
-` + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
-if (uKeyOn > 0.5) {
-  vec3 srgb = pow(max(diffuseColor.rgb, vec3(0.0)), vec3(1.0 / 2.2));
-  float d = distance(anjaCbCr(srgb), anjaCbCr(uKey));
-  float a = smoothstep(uKeySim, uKeySim + uKeySmooth, d);
-  diffuseColor.a *= a;
-  float sp = pow(1.0 - smoothstep(uKeySim, uKeySim + uKeySmooth + uKeySpill * 0.4, d), 1.5) * uKeySpill;
-  float l = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(l), clamp(sp, 0.0, 1.0));
-}`);
-    };
+  // f: { kind, fov, stereo, swap } – siehe projection.js
+  setFormat(f, source = 'Manuell') {
+    this.format = normalize(f);
+    this.formatSource = source;
+    const v = this.video;
+    const p = params(this.format, v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9);
+    this._params = p;
+    const u = this.u;
+    u.uProj.value = p.proj; u.uRange.value.set(p.range[0], p.range[1]); u.uGrid.value.set(p.grid[0], p.grid[1]);
+    u.uFacePos.value = p.facePos; u.uFaceRot.value = p.faceRot;
+    u.uStereo.value = p.stereo; u.uSwap.value = p.swap; u.uWrap.value = p.wrap;
+    this._buildMeshes(p.stereo !== 0);
+    this.onFormat?.(this.format, source);
   }
 
-  // { on, color: '#00ff00', sim, smooth, spill }
-  setChroma(opts) {
-    const u = this.chroma;
-    if ('on' in opts) u.on.value = opts.on ? 1 : 0;
-    if (opts.color) u.key.value.setStyle(opts.color, THREE.NoColorSpace);
-    if ('sim' in opts) u.sim.value = opts.sim;
-    if ('smooth' in opts) u.smooth.value = opts.smooth;
-    if ('spill' in opts) u.spill.value = opts.spill;
-    this.onChroma?.(this.chromaState());
+  // { on, color, hue (Grad), sat, soft, choke (Pixel), spill, lumMin, lumMax, mask }
+  setChroma(opts, silent = false) {
+    const ch = this._chroma;
+    for (const k of Object.keys(CHROMA_DEFAULT)) if (opts[k] !== undefined) ch[k] = k === 'on' || k === 'mask' ? !!opts[k] : k === 'color' ? opts[k] : Number(opts[k]);
+    const u = this.u;
+    u.uKeyOn.value = ch.on ? 1 : 0; u.uKeyMask.value = ch.mask ? 1 : 0;
+    u.uKey.value.setStyle(ch.color, THREE.NoColorSpace);
+    u.uKeyHue.value = (ch.hue * Math.PI) / 180; u.uKeySat.value = ch.sat; u.uKeySoft.value = ch.soft;
+    u.uKeyChoke.value = ch.choke; u.uKeySpill.value = ch.spill; u.uKeyLumMin.value = ch.lumMin; u.uKeyLumMax.value = ch.lumMax;
+    if (!silent) this.onChroma?.(this.chromaState());
   }
 
-  chromaState() {
-    const u = this.chroma;
-    return { on: u.on.value > 0.5, color: '#' + u.key.value.getHexString(THREE.NoColorSpace),
-      sim: u.sim.value, smooth: u.smooth.value, spill: u.spill.value };
-  }
+  chromaState() { return { ...this._chroma }; }
 
   // Pipette: Farbe des Videos an einer Bildschirmstelle (Mittelwert 5×5 Pixel)
   pickColor(clientX, clientY) {
@@ -131,14 +278,14 @@ if (uKeyOn > 0.5) {
     const r = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
     const rc = new THREE.Raycaster();
-    rc.layers.enableAll();
     rc.setFromCamera(ndc, this.camera);
-    const hit = rc.intersectObjects(this.mesh.children.filter((m) => m.layers.mask & 3), false)[0];
-    if (!hit?.uv) return null;
+    const dir = rc.ray.direction.clone().applyQuaternion(this.mesh.quaternion.clone().invert());
+    const uv = dirToUV(this._params, dir, 0, v.videoWidth, v.videoHeight);
+    if (!uv) return null;
     const c = this._pickCanvas || (this._pickCanvas = document.createElement('canvas'));
     c.width = 5; c.height = 5;
     const ctx = c.getContext('2d', { willReadFrequently: true });
-    const x = hit.uv.x * v.videoWidth, y = (1 - hit.uv.y) * v.videoHeight;
+    const x = uv.u * v.videoWidth, y = uv.v * v.videoHeight;
     try {
       ctx.drawImage(v, x - 2.5, y - 2.5, 5, 5, 0, 0, 5, 5);
       const d = ctx.getImageData(0, 0, 5, 5).data;
@@ -289,8 +436,8 @@ if (uKeyOn > 0.5) {
     window.removeEventListener('resize', this._onResize);
     this.texture.dispose();
     this.video.removeEventListener('loadedmetadata', this._onMeta);
-    for (const m of this.mesh.children) m.geometry.dispose();
-    this.material.dispose();
+    for (const m of this.mesh.children) m.material.dispose();
+    this._geo.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }

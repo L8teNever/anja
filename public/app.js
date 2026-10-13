@@ -1,4 +1,6 @@
 import { hydrateIcons, icon, setIcon } from '/icons.js';
+import { fromName, fromMeta, fromFrame, fromSize, metaFromUrl, metaFromFile, combine, normalize, describe,
+  grabFrame, renderPreview, PROJ_LABEL, STEREO_LABEL, defaultFov, autoKey, CHROMA_DEFAULT } from '/projection.js';
 
 const VERSION = '__APP_VERSION__';
 const VIDEO_CACHE = 'anja-videos';
@@ -165,19 +167,21 @@ function groupVideos(files) {
   const by = new Map();
   for (const f of files) {
     if (f.type !== 'file') continue;
-    const m = /^(.*)\.(mp4|m4v|webm|jpe?g)$/i.exec(f.name);
+    const m = /^(.*)\.(mp4|m4v|webm|mov|mkv|jpe?g|json)$/i.exec(f.name);
     if (!m) continue;
     const g = by.get(m[1]) || { base: m[1], sources: [] };
-    if (/^jpe?g$/i.test(m[2])) g.poster = f; else g.sources.push({ ...f, ext: m[2].toLowerCase() });
+    if (/^jpe?g$/i.test(m[2])) g.poster = f;
+    else if (/^json$/i.test(m[2])) g.meta = f;           // gespeichertes Videoformat
+    else g.sources.push({ ...f, ext: m[2].toLowerCase() });
     by.set(m[1], g);
   }
   const out = [];
   for (const g of by.values()) {
     if (!g.sources.length) continue;
-    const rank = (s) => (s.ext === 'webm' ? (canWebm ? (canMp4 ? 1 : 0) : 3) : (canMp4 ? 0 : 2));
+    const rank = (s) => (['webm', 'mkv'].includes(s.ext) ? (canWebm ? (canMp4 ? 1 : 0) : 3) : (canMp4 ? 0 : 2));
     g.sources.sort((a, b) => rank(a) - rank(b));
-    out.push({ ...g.sources[0], base: g.base, poster: g.poster,
-      all: [...g.sources.map((x) => x.name), ...(g.poster ? [g.poster.name] : [])] });
+    out.push({ ...g.sources[0], base: g.base, poster: g.poster, meta: g.meta,
+      all: [...g.sources.map((x) => x.name), ...(g.poster ? [g.poster.name] : []), ...(g.meta ? [g.meta.name] : [])] });
   }
   return out.sort((a, b) => a.base.localeCompare(b.base, 'de'));
 }
@@ -208,6 +212,12 @@ async function loadList() {
     return;
   }
 
+  // gespeicherte Formate (kleine .json-Dateien) fuer die Abzeichen laden
+  await Promise.all(items.map(async (f) => {
+    f.format = f.meta ? await loadSidecar(f.meta.name) : null;
+    if (!f.format) { const n = fromName(f.name); if (n.kind || n.stereo) f.format = normalize(n); }
+  }));
+
   list.innerHTML = '';
   for (const f of items) {
     const path = `/videos/${encodeURIComponent(f.name)}`;
@@ -218,7 +228,7 @@ async function loadList() {
     card.innerHTML = `
       <div class="thumb">
         ${posterPath ? `<img class="ph" src="${posterPath}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ph'}))">` : '<div class="ph"></div>'}
-        <span class="badge ${isOff ? 'off' : ''}">${isOff ? 'Offline verfügbar' : '360°'}</span>
+        <span class="badge ${isOff ? 'off' : ''}">${isOff ? 'Offline verfügbar' : f.format ? shortFormat(f.format) : '360°'}</span>
         <span class="playbig">${icon('play_arrow')}</span>
         ${uploadEnabled && navigator.onLine ? `<button class="srv-del" data-act="srv" aria-label="Vom Server löschen" title="Vom Server löschen">${icon('delete')}</button>` : ''}
       </div>
@@ -229,8 +239,8 @@ async function loadList() {
           ${icon(isOff ? 'check' : 'download')}<span class="lbl">${isOff ? 'Offline' : 'Offline speichern'}</span><span class="prog"></span>
         </button>
       </div>`;
-    card.querySelector('.thumb').addEventListener('click', () => openPlayer(path, niceName(f.base)));
-    card.querySelector('[data-act=cache]').addEventListener('click', (e) => onCacheClick(e.currentTarget, path, f.size, isOff, posterPath));
+    card.querySelector('.thumb').addEventListener('click', () => openPlayer(path, niceName(f.base), f));
+    card.querySelector('[data-act=cache]').addEventListener('click', (e) => onCacheClick(e.currentTarget, path, f.size, isOff, posterPath, f.meta ? `/videos/${encodeURIComponent(f.meta.name)}` : null));
     card.querySelector('[data-act=del]')?.addEventListener('click', () => removeOffline(path, posterPath));
     card.querySelector('[data-act=srv]')?.addEventListener('click', (e) => { e.stopPropagation(); deleteFromServer(f, path, posterPath); });
     if (busy.has(path)) markBusy(card.querySelector('[data-act=cache]'), path);
@@ -244,7 +254,7 @@ function markBusy(btn, path) {
   btn.dataset.path = path;
 }
 
-async function onCacheClick(btn, path, size, isOff, posterPath) {
+async function onCacheClick(btn, path, size, isOff, posterPath, metaPath) {
   if (isOff) { toast('Schon offline gespeichert'); return; }
   if (busy.has(path)) { busy.get(path).abort(); return; }
   if (!navigator.onLine) { toast('Zum Speichern brauchst du Internet'); return; }
@@ -282,6 +292,9 @@ async function onCacheClick(btn, path, size, isOff, posterPath) {
       'Content-Type': type, 'Content-Length': String(blob.size), 'Accept-Ranges': 'bytes' } }));
     if (posterPath) {
       try { const pr = await fetch(posterPath, { cache: 'no-store' }); if (pr.ok) await cache.put(posterPath, pr); } catch {}
+    }
+    if (metaPath) {
+      try { const mr = await fetch(metaPath, { cache: 'no-store' }); if (mr.ok) await cache.put(metaPath, mr); } catch {}
     }
     toast('Gespeichert – läuft jetzt auch ohne Internet');
   } catch (e) {
@@ -322,7 +335,7 @@ async function initUpload() {
 const UMLAUT = { ä: 'ae', ö: 'oe', ü: 'ue', Ä: 'Ae', Ö: 'Oe', Ü: 'Ue', ß: 'ss' };
 function uploadName(file) {
   const ext = (/\.([^.]+)$/.exec(file.name)?.[1] || '').toLowerCase();
-  if (!['mp4', 'm4v', 'webm', 'mov'].includes(ext)) return null;
+  if (!['mp4', 'm4v', 'webm', 'mov', 'mkv'].includes(ext)) return null;
   let base = file.name.replace(/\.[^.]+$/, '')
     .replace(/[äöüÄÖÜß]/g, (c) => UMLAUT[c])
     .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
@@ -333,7 +346,7 @@ function uploadName(file) {
   let name = base, n = 2;
   while (serverNames.has(name.toLowerCase())) name = `${base}-${n++}`;
   serverNames.add(name.toLowerCase());
-  return { base: name, video: `${name}.${ext}`, poster: `${name}.jpg` };
+  return { base: name, video: `${name}.${ext}`, poster: `${name}.jpg`, meta: `${name}.json` };
 }
 
 // Video lokal oeffnen: Groesse, Abspielbarkeit, Vorschaubild
@@ -341,27 +354,38 @@ function analyze(file) {
   return new Promise((resolve) => {
     const v = document.createElement('video');
     const url = URL.createObjectURL(file);
-    let done = false;
+    let done = false, tries = 0;
     const finish = (info) => {
       if (done) return; done = true; clearTimeout(timer);
       v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url);
       resolve(info);
     };
-    const timer = setTimeout(() => finish({ ok: false }), 20000);
+    const timer = setTimeout(() => finish({ ok: false }), 25000);
+    const metaP = metaFromFile(file);
     v.muted = true; v.playsInline = true; v.preload = 'auto';
     v.onloadedmetadata = () => {
       if (!v.videoWidth) { finish({ ok: false }); return; }
       v.currentTime = Math.min(2, (v.duration || 1) / 3);
     };
-    v.onseeked = () => {
+    v.onseeked = async () => {
       const w = v.videoWidth, h = v.videoHeight;
-      const c = document.createElement('canvas');
-      // bei 3D nur das linke Auge als Vorschau
-      const lay = w / h > 3 ? 'lr' : Math.abs(w / h - 1) < 0.08 ? 'tb' : 'mono';
-      const sw = lay === 'lr' ? w / 2 : w, sh = lay === 'tb' ? h / 2 : h;
-      c.width = 1024; c.height = 512;
-      c.getContext('2d').drawImage(v, 0, 0, sw, sh, 0, 0, c.width, c.height);
-      c.toBlob((thumb) => finish({ ok: true, w, h, dur: v.duration, thumb }), 'image/jpeg', 0.82);
+      const img = grabFrame(v);
+      const frame = img ? fromFrame(img) : { f: fromSize(w, h), informative: false };
+      // dunkles Bild (Abblende) -> etwas spaeter nochmal schauen
+      if (!frame.informative && tries++ < 3 && v.duration > v.currentTime + 2) { v.currentTime += 3; return; }
+      const nameF = fromName(file.name), metaF = await metaP;
+      const format = combine(nameF, metaF, frame.f);
+      const source = Object.keys(nameF).length ? 'Dateiname' : Object.keys(metaF).length ? 'Metadaten' : 'Bildanalyse';
+      let canvas = null;
+      try {
+        if (format.kind === 'flat') {
+          canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 512;
+          const ctx = canvas.getContext('2d'); const s = Math.max(1024 / w, 512 / h);
+          ctx.drawImage(v, (1024 - w * s) / 2, (512 - h * s) / 2, w * s, h * s);
+        } else canvas = renderPreview(v, format, 1024);
+      } catch { canvas = null; }
+      if (!canvas) { finish({ ok: true, w, h, dur: v.duration, format, source }); return; }
+      canvas.toBlob((thumb) => finish({ ok: true, w, h, dur: v.duration, thumb, format, source }), 'image/jpeg', 0.82);
     };
     v.onerror = () => finish({ ok: false });
     v.src = url;
@@ -402,42 +426,153 @@ function uploadRow(title) {
   return el;
 }
 
+/* Grosse Videos: 16-MB-Stuecke, 3 gleichzeitig. Bricht etwas ab (Netz weg, Handy
+ * schlaeft, Seite zu), weiss der Server, welche Stuecke schon da sind. Solange die Seite
+ * offen ist, wird endlos neu versucht; nach dem Schliessen einfach dieselbe Datei nochmal
+ * auswaehlen – dann geht es an derselben Stelle weiter. */
+const CHUNK = 16 * 1024 * 1024;
+const PARALLEL = 3;
+const PENDING_KEY = 'anja-pending-uploads';
+const fileKey = (f) => `${f.name}|${f.size}|${f.lastModified}`;
+const pendingAll = () => { try { return JSON.parse(localStorage.getItem(PENDING_KEY)) || {}; } catch { return {}; } };
+const pendingSet = (k, v) => { const all = pendingAll(); if (v) all[k] = v; else delete all[k]; try { localStorage.setItem(PENDING_KEY, JSON.stringify(all)); } catch {} };
+const sleepers = new Set();
+const wakeRetry = () => [...sleepers].forEach((f) => f());
+addEventListener('online', () => wakeRetry());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { wakeRetry(); keepAwake(uploadsRunning > 0); } });
+
+function sendChunk(url, body, onProgress, item) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', url);
+    x.timeout = 180000;
+    x.upload.onprogress = (e) => onProgress(e.loaded);
+    x.onload = () => {
+      let data = {};
+      try { data = JSON.parse(x.responseText); } catch {}
+      if (x.status >= 200 && x.status < 300) resolve(data);
+      else reject(Object.assign(new Error(data.error === 'write' ? 'Server-Speicher voll?' : `HTTP ${x.status}`), { status: x.status, data }));
+    };
+    x.onerror = x.ontimeout = () => reject(Object.assign(new Error('Verbindung unterbrochen'), { status: 0 }));
+    x.onabort = () => reject(Object.assign(new Error('Abgebrochen'), { name: 'AbortError' }));
+    item.xhrs.add(x);
+    x.addEventListener('loadend', () => item.xhrs.delete(x));
+    x.send(body);
+  });
+}
+
+async function uploadResumable(name, file, item, onProgress, onStatus) {
+  const base = `/upload-chunk/${encodeURIComponent(name)}?total=${file.size}&chunk=${CHUNK}`;
+  item.cleanup = () => fetch(base, { method: 'DELETE' }).catch(() => {});
+  const n = Math.ceil(file.size / CHUNK);
+  let st = {};
+  for (let t = 0; ; t++) {
+    try { const r = await fetch(base, { cache: 'no-store' }); st = await r.json(); break; }
+    catch { if (item.cancelled) throw Object.assign(new Error('Abgebrochen'), { name: 'AbortError' }); onStatus('Warte auf Verbindung…'); await sleep(Math.min(30000, 2000 * 2 ** t)); }
+  }
+  if (st.complete) return;
+  if (st.exists) throw new Error('Eine andere Datei mit diesem Namen ist schon da');
+  const done = new Set(st.have || []);
+  const sizeOf = (i) => Math.min(CHUNK, file.size - i * CHUNK);
+  let doneBytes = [...done].reduce((a, i) => a + sizeOf(i), 0);
+  if (done.size) onStatus(`Mache weiter bei ${Math.floor((doneBytes / file.size) * 100)} %`);
+  const queue = [...Array(n).keys()].filter((i) => !done.has(i));
+  const inflight = new Map();
+  const report = () => onProgress(doneBytes + [...inflight.values()].reduce((a, b) => a + b, 0), file.size);
+  report();
+  let finished = false;
+  const worker = async () => {
+    while (queue.length && !finished) {
+      const i = queue.shift();
+      for (let t = 0; ; t++) {
+        if (item.cancelled) throw Object.assign(new Error('Abgebrochen'), { name: 'AbortError' });
+        try {
+          inflight.set(i, 0);
+          const res = await sendChunk(`${base}&index=${i}`, file.slice(i * CHUNK, i * CHUNK + sizeOf(i)), (b) => { inflight.set(i, b); report(); }, item);
+          inflight.delete(i); doneBytes += sizeOf(i); report();
+          if (res.done) finished = true;
+          break;
+        } catch (e) {
+          inflight.delete(i); report();
+          if (e.name === 'AbortError') throw e;
+          if (e.status === 409) { if (e.data?.complete) { finished = true; break; } throw new Error('Eine andere Datei mit diesem Namen ist schon da'); }
+          if (e.status === 400 || e.status === 507) throw e;
+          // Netz weg / Handy im Hintergrund / Server kurz weg: warten und nochmal
+          onStatus(navigator.onLine ? 'Verbindung unterbrochen – versuche erneut…' : 'Offline – geht weiter, sobald Internet da ist');
+          await sleep(Math.min(30000, 1500 * 2 ** Math.min(t, 5)));
+        }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL, queue.length || 1) }, worker));
+}
+
+function sleep(ms) {
+  return new Promise((res) => {
+    const t = setTimeout(done, ms);
+    function done() { clearTimeout(t); sleepers.delete(done); res(); }
+    sleepers.add(done); // bei "wieder online"/"wieder sichtbar"/Abbrechen sofort weiter
+  });
+}
+
+// Tempo als gleitender Durchschnitt der letzten 8 Sekunden (nicht seit Start)
+function speedMeter() {
+  const pts = [];
+  return (bytes) => {
+    const now = Date.now();
+    pts.push([now, bytes]);
+    while (pts.length > 2 && now - pts[0][0] > 8000) pts.shift();
+    const [t0, b0] = pts[0];
+    return now - t0 > 500 ? Math.max(0, (bytes - b0) / ((now - t0) / 1000)) : 0;
+  };
+}
+
 async function uploadFile(file) {
-  const names = uploadName(file);
-  if (!names) { toast(`„${file.name}“: nur .mp4, .m4v, .webm oder .mov`, 4000); return; }
+  const key = fileKey(file);
+  const pend = pendingAll()[key];
+  const names = pend?.names || uploadName(file);
+  if (!names) { toast(`„${file.name}“: nur .mp4, .m4v, .webm, .mov oder .mkv`, 4000); return; }
+  serverNames.add(names.base.toLowerCase());
+  document.querySelector(`.up-item[data-key="${CSS.escape(key)}"]`)?.remove();
   const row = uploadRow(niceName(names.base));
-  const item = { abort: null, cancelled: false };
-  row.querySelector('button').addEventListener('click', () => { item.cancelled = true; item.abort?.(); });
+  row.dataset.key = key;
+  const item = { xhrs: new Set(), cancelled: false, cleanup: null };
+  row.querySelector('button').addEventListener('click', () => {
+    item.cancelled = true; item.xhrs.forEach((x) => x.abort()); wakeRetry(); item.cleanup?.(); pendingSet(key, null);
+  });
   const pct = row.querySelector('.up-pct'), bar = row.querySelector('.bar > div'), note = row.querySelector('.up-note');
   uploadsRunning++; keepAwake(true);
   try {
     const info = await analyze(file);
     if (item.cancelled) throw Object.assign(new Error('Abgebrochen'), { name: 'AbortError' });
-    if (!info.ok) {
+    if (!info.ok && !pend) {
       if (!confirm(`„${file.name}“ kann dieses Gerät nicht abspielen (evtl. HEVC/H.265).\nAuf anderen Geräten geht es vielleicht nicht. Trotzdem hochladen?`)) throw Object.assign(new Error('Abgebrochen'), { name: 'AbortError' });
-      note.textContent = 'Ohne Vorschaubild – Format hier nicht abspielbar';
-    } else {
-      const r = info.w / info.h;
-      const is360 = Math.abs(r - 2) < 0.1 || Math.abs(r - 1) < 0.08 || Math.abs(r - 4) < 0.2;
-      if (!is360 && !confirm(`„${file.name}“ hat ${info.w}×${info.h} Pixel – das ist kein typisches 360°-Format (2:1).\nEs würde verzerrt aussehen. Trotzdem hochladen?`)) throw Object.assign(new Error('Abgebrochen'), { name: 'AbortError' });
-      const kind = Math.abs(r - 1) < 0.08 ? '3D übereinander' : r > 3 ? '3D nebeneinander' : '360°';
-      note.textContent = `${info.w}×${info.h} · ${kind} · ${fmtTime(info.dur)} · ${fmtBytes(file.size)}`;
     }
-    const t0 = Date.now();
-    await put(`/upload/${encodeURIComponent(names.video)}`, file, file.type || 'video/mp4', (got, total) => {
+    const desc = info.ok ? `${info.w}×${info.h} · ${describe(info.format)} · ${fmtTime(info.dur)} · ${fmtBytes(file.size)}`
+      : `Ohne Vorschaubild – Format hier nicht abspielbar · ${fmtBytes(file.size)}`;
+    note.textContent = desc;
+    pendingSet(key, { names, title: niceName(names.base), size: file.size, at: Date.now() });
+    const speed = speedMeter();
+    let statusUntil = 0;
+    await uploadResumable(names.video, file, item, (got, total) => {
       const p = Math.floor((got / total) * 100);
       bar.style.width = `${p}%`;
-      const rate = got / Math.max(1, (Date.now() - t0) / 1000);
+      const rate = speed(got);
       const left = rate > 0 ? (total - got) / rate : 0;
-      pct.textContent = `${p} % · ${fmtBytes(rate)}/s${left > 5 ? ` · noch ${fmtTime(left)}` : ''}`;
-    }, item);
+      if (Date.now() > statusUntil) note.textContent = desc;
+      pct.textContent = `${p} %${rate ? ` · ${fmtBytes(rate)}/s` : ''}${left > 5 ? ` · noch ${fmtTime(left)}` : ''}`;
+    }, (msg) => { note.textContent = msg; statusUntil = Date.now() + 4000; });
+    pendingSet(key, null);
     if (info.thumb) { try { await put(`/upload/${encodeURIComponent(names.poster)}`, info.thumb, 'image/jpeg'); } catch {} }
-    pct.textContent = 'Fertig'; bar.style.width = '100%'; row.classList.add('done');
+    // erkanntes Format gleich mitspeichern, dann sieht es auf allen Geraeten sofort richtig aus
+    if (info.format) {
+      try { await put(`/upload/${encodeURIComponent(names.meta)}`, JSON.stringify({ format: info.format, source: `Beim Hochladen (${info.source})` }), 'application/json'); } catch {}
+    }
+    pct.textContent = 'Fertig'; bar.style.width = '100%'; row.classList.add('done'); note.textContent = desc;
     toast(`„${niceName(names.base)}“ ist jetzt auf dem Server`);
     setTimeout(() => { row.remove(); if (!$('uploads').children.length) $('uploads').hidden = true; }, 2500);
   } catch (e) {
-    serverNames.delete(names.base.toLowerCase());
-    if (e.name === 'AbortError') { row.remove(); toast('Hochladen abgebrochen'); }
+    if (e.name === 'AbortError') { serverNames.delete(names.base.toLowerCase()); row.remove(); toast('Hochladen abgebrochen'); }
     else { row.classList.add('err'); pct.textContent = 'Fehler'; note.textContent = e.message;
       row.querySelector('button').onclick = () => row.remove(); }
     if (!$('uploads').children.length) $('uploads').hidden = true;
@@ -447,10 +582,32 @@ async function uploadFile(file) {
   }
 }
 
+// Unterbrochene Uploads von frueher anzeigen – gleiche Datei auswaehlen = weitermachen
+async function showPending() {
+  const all = pendingAll();
+  for (const [key, p] of Object.entries(all)) {
+    if (Date.now() - p.at > 7 * 864e5) { pendingSet(key, null); continue; }
+    if (document.querySelector(`.up-item[data-key="${CSS.escape(key)}"]`)) continue;
+    let st = null;
+    try { st = await (await fetch(`/upload-chunk/${encodeURIComponent(p.names.video)}?total=${p.size}&chunk=${CHUNK}`, { cache: 'no-store' })).json(); } catch {}
+    if (st?.complete) { pendingSet(key, null); continue; }
+    const row = uploadRow(p.title);
+    row.dataset.key = key; row.classList.add('paused');
+    const got = Math.min(p.size, (st?.have?.length || 0) * CHUNK);
+    row.querySelector('.bar > div').style.width = `${Math.floor((got / p.size) * 100)}%`;
+    row.querySelector('.up-pct').textContent = `${Math.floor((got / p.size) * 100)} % · pausiert`;
+    row.querySelector('.up-note').innerHTML = 'Unterbrochen. <button class="link">Gleiche Datei wählen</button> – es geht dort weiter, wo es aufgehört hat.';
+    row.querySelector('.link').addEventListener('click', () => $('up-file').click());
+    row.querySelector('button.icon-btn').addEventListener('click', () => {
+      fetch(`/upload-chunk/${encodeURIComponent(p.names.video)}?total=${p.size}&chunk=${CHUNK}`, { method: 'DELETE' }).catch(() => {});
+      pendingSet(key, null); row.remove(); if (!$('uploads').children.length) $('uploads').hidden = true;
+    });
+  }
+}
+
 async function uploadFiles(files) {
   if (!uploadEnabled) { toast('Hochladen ist auf diesem Server aus'); return; }
-  if (!navigator.onLine) { toast('Zum Hochladen brauchst du Internet'); return; }
-  for (const f of files) await uploadFile(f); // nacheinander, damit die Leitung nicht geteilt wird
+  for (const f of files) await uploadFile(f); // nacheinander; jede Datei selbst laeuft in 3 Stuecken parallel
 }
 
 $('up-btn').addEventListener('click', () => $('up-file').click());
@@ -484,7 +641,131 @@ async function deleteFromServer(f, path, posterPath) {
 /* ---------------- Player ---------------- */
 let viewer = null, video = null;
 
-async function openPlayer(src, title) {
+/* ---------------- Videoformat ----------------
+ * Reihenfolge: gespeichert (.json neben dem Video, gilt fuer alle Geraete) > auf diesem
+ * Geraet gemerkt > Dateiname > Metadaten im Video > Bildanalyse > Seitenverhaeltnis.
+ */
+async function loadSidecarRaw(name) {
+  try {
+    const r = await fetch(`/videos/${encodeURIComponent(name)}`, { cache: 'no-store' });
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
+async function loadSidecar(name) {
+  try {
+    const r = await fetch(`/videos/${encodeURIComponent(name)}`, { cache: 'no-store' });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j?.format ? normalize(j.format) : null;
+  } catch { return null; }
+}
+
+function shortFormat(f) {
+  f = normalize(f);
+  const base = { equirect360: '360°', equirect180: '180°', fisheye: '180° Fischauge', dfisheye: '360°',
+    eac: '360°', c3x2: '360°', c6x1: '360°', c1x6: '360°', flat: 'Leinwand' }[f.kind];
+  return f.stereo === 'mono' ? base : `${base} 3D`;
+}
+
+let fmtCtx = null; // { src, item, manual, timer }
+
+async function detectFormat(src, item) {
+  const ctx = fmtCtx = { src, item, manual: false };
+  const local = (() => { try { return JSON.parse(localStorage.getItem(`anja-format:${src}`)); } catch { return null; } })();
+  const side = item?.meta ? await loadSidecar(item.meta.name) : null;
+  if (ctx !== fmtCtx || !viewer) return;
+  if (side) { viewer.setFormat(side, 'Gespeichert (für alle)'); return; }
+  if (local) { viewer.setFormat(local, 'Auf diesem Gerät gemerkt'); return; }
+  const nameF = fromName(decodeURIComponent(src.split('/').pop()));
+  const metaF = await metaFromUrl(src);
+  if (ctx !== fmtCtx || !viewer || ctx.manual) return;
+  const label = () => [Object.keys(nameF).length && 'Dateiname', Object.keys(metaF).length && 'Metadaten'].filter(Boolean);
+  const apply = (frameF, how) => {
+    if (ctx !== fmtCtx || !viewer || ctx.manual) return;
+    viewer.setFormat(combine(nameF, metaF, frameF), [...label(), how].filter(Boolean).join(' + ') || how);
+  };
+  const v = viewer.video;
+  if (v.videoWidth) apply(fromSize(v.videoWidth, v.videoHeight), 'Seitenverhältnis');
+  // Bildanalyse, sobald ein aussagekraeftiges Bild da ist (nicht das schwarze erste)
+  let tries = 0;
+  const look = () => {
+    if (ctx !== fmtCtx || !viewer || ctx.manual) return;
+    const img = grabFrame(v);
+    const fr = img ? fromFrame(img) : null;
+    if (fr && (fr.informative || tries >= 6)) apply(fr.f, 'Bildanalyse');
+    else if (tries++ < 6) ctx.timer = setTimeout(look, 1200);
+  };
+  ctx.timer = setTimeout(look, v.readyState >= 2 ? 600 : 1500);
+}
+
+function fillFormatPanel(f, source) {
+  f = normalize(f);
+  $('fp-kind').value = f.kind; $('fp-stereo').value = f.stereo; $('fp-swap').checked = f.swap;
+  const needsFov = ['fisheye', 'dfisheye', 'flat'].includes(f.kind);
+  $('fp-fov-row').hidden = !needsFov;
+  $('fp-fov').value = f.fov || defaultFov(f.kind);
+  $('fp-fov-val').textContent = `${$('fp-fov').value}°`;
+  $('fp-swap-row').hidden = f.stereo === 'mono';
+  $('fp-src').textContent = `Erkannt über: ${source}`;
+  $('fp-save').hidden = !uploadEnabled || !navigator.onLine;
+}
+
+(() => {
+  $('fp-kind').innerHTML = Object.entries(PROJ_LABEL).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+  $('fp-stereo').innerHTML = Object.entries(STEREO_LABEL).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+})();
+
+function formatFromPanel() {
+  const kind = $('fp-kind').value;
+  return normalize({ kind, stereo: $('fp-stereo').value, swap: $('fp-swap').checked,
+    fov: ['fisheye', 'dfisheye', 'flat'].includes(kind) ? Number($('fp-fov').value) : 0 });
+}
+
+function onFormatInput(e) {
+  if (!viewer) return;
+  if (fmtCtx) { fmtCtx.manual = true; clearTimeout(fmtCtx.timer); }
+  // neue Projektion -> passenden Standard-Blickwinkel nehmen
+  if (e?.target?.id === 'fp-kind') $('fp-fov').value = defaultFov($('fp-kind').value) || $('fp-fov').value;
+  const f = formatFromPanel();
+  viewer.setFormat(f, 'Manuell');
+  try { localStorage.setItem(`anja-format:${fmtCtx?.src}`, JSON.stringify(f)); } catch {}
+}
+for (const id of ['fp-kind', 'fp-stereo', 'fp-swap', 'fp-fov']) $(id).addEventListener('input', onFormatInput);
+$('p-fmt').addEventListener('click', () => {
+  $('key-panel').hidden = true;
+  const p = $('fmt-panel'); p.hidden = !p.hidden;
+  if (viewer) fillFormatPanel(viewer.format, viewer.formatSource);
+});
+$('fp-close').addEventListener('click', () => { $('fmt-panel').hidden = true; });
+$('fp-save').addEventListener('click', async () => {
+  const item = fmtCtx?.item;
+  if (!item || !viewer) return;
+  const base = item.name.replace(/\.[^.]+$/, '');
+  try {
+    const old = item.meta ? await loadSidecarRaw(item.meta.name) : null;
+    await put(`/upload/${encodeURIComponent(`${base}.json`)}`, JSON.stringify({ ...old, format: viewer.format, source: 'Manuell gespeichert' }), 'application/json');
+    item.meta = { name: `${base}.json` };
+    viewer.setFormat(viewer.format, 'Gespeichert (für alle)');
+    toast('Format gespeichert – gilt jetzt auf allen Geräten');
+  } catch (e) { toast(`Speichern ging nicht (${e.message})`, 4000); }
+});
+$('fp-auto').addEventListener('click', async () => {
+  const item = fmtCtx?.item, src = fmtCtx?.src;
+  if (!viewer || !src) return;
+  try { localStorage.removeItem(`anja-format:${src}`); } catch {}
+  if (item?.meta && uploadEnabled && navigator.onLine) {
+    // nur das Format vergessen – eine gespeicherte Greenscreen-Einstellung bleibt
+    const old = await loadSidecarRaw(item.meta.name);
+    if (old?.chroma) await put(`/upload/${encodeURIComponent(item.meta.name)}`, JSON.stringify({ chroma: old.chroma }), 'application/json').catch(() => {});
+    else { await fetch(`/upload/${encodeURIComponent(item.meta.name)}`, { method: 'DELETE' }).catch(() => {}); item.meta = null; }
+  }
+  viewer.formatSource = 'Standard';
+  await detectFormat(src, item);
+  toast('Format wird automatisch erkannt');
+});
+
+async function openPlayer(src, title, item = null) {
   const { Viewer } = await import('/viewer.js');
   $('p-title').textContent = title;
   $('player').hidden = false;
@@ -500,20 +781,27 @@ async function openPlayer(src, title) {
   video.preload = 'auto';
 
   viewer = new Viewer($('stage'), video, { title });
+  viewer.onFormat = (f, source) => { if (!$('fmt-panel').hidden) fillFormatPanel(f, source); };
+  detectFormat(src, item);
   const hint = $('tap-hint'); hint.classList.remove('gone');
   viewer.onInteract = () => hint.classList.add('gone');
   setTimeout(() => hint.classList.add('gone'), 4000);
 
-  // Greenscreen-Einstellungen pro Video merken; Dateiname mit "green"/"chroma" schaltet es gleich an
+  // Greenscreen-Einstellungen: auf diesem Geraet gemerkt > fuer alle gespeichert > Standard.
+  // Dateiname mit "green"/"chroma" schaltet es gleich an (Farbe wird dann automatisch gesucht).
   chromaKey = `anja-chroma:${src}`;
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(chromaKey)); } catch {}
-  viewer.setChroma({ ...CHROMA_DEFAULT, on: /green|gruen|grün|chroma|keying/i.test(decodeURIComponent(src)), ...saved });
+  if (saved && saved.hue === undefined) saved = { on: saved.on, color: saved.color }; // alte Einstellungen
+  const side = item?.meta ? await loadSidecarRaw(item.meta.name) : null;
+  const preset = saved || side?.chroma || null;
+  viewer.setChroma({ ...CHROMA_DEFAULT, on: /green|gruen|grün|chroma|keying/i.test(decodeURIComponent(src)), ...preset, mask: false });
   viewer.onChroma = (st) => {
-    try { localStorage.setItem(chromaKey, JSON.stringify(st)); } catch {}
+    try { localStorage.setItem(chromaKey, JSON.stringify({ ...st, mask: false })); } catch {}
     syncKeyUI(st);
   };
   syncKeyUI(viewer.chromaState());
+  if (viewer.chromaState().on && !preset) autoKeyWhenReady(false);
 
   // Durchsicht (AR): Quest-Passthrough bzw. Handy-Kamera mit Raumerkennung
   const arSlot = $('ar-slot'); arSlot.innerHTML = '';
@@ -560,7 +848,8 @@ async function openPlayer(src, title) {
 function closePlayer() {
   if (!viewer) return;
   stopCam(); setPicking(false);
-  $('key-panel').hidden = true;
+  $('key-panel').hidden = true; $('fmt-panel').hidden = true;
+  if (fmtCtx) { clearTimeout(fmtCtx.timer); fmtCtx = null; }
   viewer.onChroma = null;
   video.pause(); video.removeAttribute('src'); video.load();
   viewer.dispose(); viewer = null; video = null;
@@ -598,29 +887,67 @@ $('p-gyro').addEventListener('click', async () => {
  *  - am Handy mit "Handy-Kamera dahinter": das Bild der Rueckkamera
  *  - sonst schwarz
  */
-const CHROMA_DEFAULT = { on: false, color: '#00ff00', sim: 0.18, smooth: 0.08, spill: 0.5 };
 let chromaKey = '';
 let camStream = null;
 let picking = false;
+const KEY_SLIDERS = { hue: (v) => `${v}°`, sat: (v) => `${Math.round(v * 200)} %`, soft: (v) => `${Math.round(v * 100)} %`,
+  choke: (v) => `${v} px`, spill: (v) => `${Math.round(v * 100)} %`, lumMin: (v) => `${Math.round(v * 100)} %`, lumMax: (v) => `${Math.round(v * 100)} %` };
 
 function syncKeyUI(st) {
   $('p-key').classList.toggle('on', st.on);
-  $('kp-on').checked = st.on;
+  $('kp-on').checked = st.on; $('kp-mask').checked = st.mask;
   $('kp-color').value = st.color;
-  $('kp-sim').value = st.sim; $('kp-smooth').value = st.smooth; $('kp-spill').value = st.spill;
+  for (const [k, f] of Object.entries(KEY_SLIDERS)) { $(`kp-${k}`).value = st[k]; $(`kv-${k}`).textContent = f(Number(st[k])); }
+}
+
+// Schluesselfarbe automatisch aus dem aktuellen Bild suchen
+async function autoKeyNow(showToast = true) {
+  if (!viewer) return false;
+  const img = grabFrame(viewer.video, 320);
+  const k = img && autoKey(img);
+  if (!k) { if (showToast) toast('Keine deutliche Hintergrundfarbe gefunden – nimm die Pipette'); return false; }
+  viewer.setChroma({ on: true, color: k.color, hue: k.hue, sat: k.sat });
+  if (showToast) toast(`Hintergrundfarbe ${k.color} gefunden`);
+  return true;
+}
+function autoKeyWhenReady(showToast) {
+  let tries = 0;
+  const go = () => { if (!viewer) return; const img = grabFrame(viewer.video, 64); const ok = img && fromFrame(img).informative;
+    if (ok || tries > 8) autoKeyNow(showToast); else { tries++; setTimeout(go, 800); } };
+  setTimeout(go, 800);
 }
 
 $('p-key').addEventListener('click', () => {
+  $('fmt-panel').hidden = true;
   const p = $('key-panel'); p.hidden = !p.hidden;
   $('kp-cam-row').hidden = !navigator.mediaDevices?.getUserMedia;
+  $('kp-save').hidden = !uploadEnabled || !navigator.onLine;
 });
-$('kp-close').addEventListener('click', () => { $('key-panel').hidden = true; setPicking(false); });
-$('kp-on').addEventListener('change', (e) => viewer?.setChroma({ on: e.target.checked }));
+$('kp-close').addEventListener('click', () => { $('key-panel').hidden = true; setPicking(false); viewer?.setChroma({ mask: false }); });
+$('kp-on').addEventListener('change', (e) => {
+  viewer?.setChroma({ on: e.target.checked });
+  // zum ersten Mal an und noch reine Standardfarbe? -> Farbe selbst suchen
+  if (e.target.checked && viewer?.chromaState().color === CHROMA_DEFAULT.color) autoKeyNow(true);
+});
+$('kp-mask').addEventListener('change', (e) => viewer?.setChroma({ mask: e.target.checked, on: true }));
 $('kp-color').addEventListener('input', (e) => viewer?.setChroma({ color: e.target.value, on: true }));
-for (const k of ['sim', 'smooth', 'spill']) {
-  $(`kp-${k}`).addEventListener('input', (e) => viewer?.setChroma({ [k]: Number(e.target.value) }));
+$('kp-auto').addEventListener('click', () => autoKeyNow(true));
+for (const k of Object.keys(KEY_SLIDERS)) {
+  $(`kp-${k}`).addEventListener('input', (e) => viewer?.setChroma({ [k]: Number(e.target.value), on: true }));
 }
-$('kp-reset').addEventListener('click', () => viewer?.setChroma({ ...CHROMA_DEFAULT, on: true }));
+$('kp-reset').addEventListener('click', () => { viewer?.setChroma({ ...CHROMA_DEFAULT, on: true }); autoKeyNow(false); });
+$('kp-save').addEventListener('click', async () => {
+  const item = fmtCtx?.item;
+  if (!item || !viewer) return;
+  const base = item.name.replace(/\.[^.]+$/, '');
+  const old = item.meta ? await loadSidecarRaw(item.meta.name) : null;
+  try {
+    await put(`/upload/${encodeURIComponent(`${base}.json`)}`, JSON.stringify({ ...old, format: old?.format || viewer.format,
+      chroma: { ...viewer.chromaState(), mask: false } }), 'application/json');
+    item.meta = { name: `${base}.json` };
+    toast('Greenscreen-Einstellung gespeichert – gilt auf allen Geräten');
+  } catch (e) { toast(`Speichern ging nicht (${e.message})`, 4000); }
+});
 
 function setPicking(on) {
   picking = on;
@@ -667,4 +994,4 @@ $('kp-cam').addEventListener('change', (e) => (e.target.checked ? startCam() : s
 $('p-back').addEventListener('click', () => { if (history.state?.player) history.back(); else closePlayer(); });
 addEventListener('popstate', () => closePlayer());
 
-initUpload().finally(loadList);
+initUpload().finally(() => { loadList(); if (uploadEnabled) showPending(); });

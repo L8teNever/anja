@@ -1,0 +1,9 @@
+services:
+  anja:
+    image: ghcr.io/l8tenever/anja:latest
+    container_name: anja
+    restart: unless-stopped
+    ports:
+      - "8080:80"          # http://localhost:8080
+    volumes:
+      - ./videos:/videos:ro

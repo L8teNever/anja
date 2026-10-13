@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0b14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Anja VR</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="stylesheet" href="/style.css?v=__APP_VERSION__">
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three.module.min.js" } }
+  </script>
+</head>
+<body>
+  <!-- Update-Leiste -->
+  <div id="update-bar" class="update-bar" hidden>
+    <span class="material">system_update</span>
+    <span id="update-text">Neue Version verfügbar</span>
+    <button id="update-btn" class="pill pill-accent">Aktualisieren</button>
+  </div>
+
+  <!-- Startseite -->
+  <main id="home" class="home">
+    <header class="top">
+      <div class="brand">
+        <div class="logo">A</div>
+        <div>
+          <h1>Anja</h1>
+          <p class="sub">360°-Videos · auch offline</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="net" class="chip" title="Verbindung">online</span>
+        <button id="menu-btn" class="round" aria-label="Menü"><span class="material">more_vert</span></button>
+      </div>
+    </header>
+
+    <section class="storage" id="storage" hidden>
+      <div class="storage-row"><span>Offline gespeichert</span><span id="storage-text">–</span></div>
+      <div class="bar"><div id="storage-bar"></div></div>
+    </section>
+
+    <section id="list" class="list" aria-live="polite">
+      <div class="empty">Lade Videos…</div>
+    </section>
+
+    <footer class="foot">
+      <span>Version <b id="ver">__APP_VERSION__</b></span>
+    </footer>
+  </main>
+
+  <!-- Menü -->
+  <div id="menu" class="sheet" hidden>
+    <div class="sheet-card">
+      <h2>Einstellungen</h2>
+      <button class="sheet-item" id="m-check"><span class="material">refresh</span><div><b>Nach Updates suchen</b><small>Prüft, ob es eine neue Version gibt</small></div></button>
+      <button class="sheet-item" id="m-repair"><span class="material">build</span><div><b>App reparieren</b><small>Leert den App-Cache und lädt alles neu. Offline-Videos bleiben.</small></div></button>
+      <button class="sheet-item danger" id="m-wipe"><span class="material">delete_sweep</span><div><b>Alles zurücksetzen</b><small>Löscht auch alle offline gespeicherten Videos</small></div></button>
+      <button class="pill wide" id="m-close">Schließen</button>
+    </div>
+  </div>
+
+  <!-- Player -->
+  <section id="player" class="player" hidden>
+    <div id="stage" class="stage"></div>
+    <div id="tap-hint" class="tap-hint">Ziehen zum Umschauen</div>
+    <div class="p-top">
+      <button id="p-back" class="round glass" aria-label="Zurück"><span class="material">arrow_back</span></button>
+      <div id="p-title" class="p-title glass">Video</div>
+      <div class="p-top-right">
+        <button id="p-gyro" class="round glass" aria-label="Bewegungssensor"><span class="material">screen_rotation</span></button>
+        <span id="vr-slot"></span>
+      </div>
+    </div>
+    <div class="p-bottom glass">
+      <button id="p-play" class="round accent" aria-label="Abspielen"><span class="material">play_arrow</span></button>
+      <span id="p-time" class="time">0:00</span>
+      <input id="p-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Spulen">
+      <span id="p-dur" class="time">0:00</span>
+      <button id="p-mute" class="round" aria-label="Ton"><span class="material">volume_up</span></button>
+      <button id="p-recenter" class="round" aria-label="Ausrichten"><span class="material">center_focus_strong</span></button>
+    </div>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script>window.ANJA_VERSION = "__APP_VERSION__";</script>
+  <script type="module" src="/app.js?v=__APP_VERSION__"></script>
+</body>
+</html>

@@ -18,6 +18,7 @@ const SHELL = [
   '/vr-menu.js',
   '/projection.js',
   '/band.js',
+  '/room.js',
   '/icons.js',
   '/vendor/three.module.min.js',
   '/vendor/VRButton.js',

@@ -639,6 +639,31 @@ async function deleteFromServer(f, path, posterPath) {
   loadList();
 }
 
+/* ---------------- Raum-Modus ----------------
+ * Durchsicht ohne Video: Wuerfel in den echten Raum stellen. Sie bleiben im Raum stehen,
+ * auch wenn man herumlaeuft, und bewegen sich nur, wenn man sie greift.
+ */
+let room = null;
+navigator.xr?.isSessionSupported?.('immersive-ar').then((ok) => { $('room-btn').hidden = !ok; }).catch(() => {});
+$('room-btn').addEventListener('click', async () => {
+  if (room) return;
+  const { Room } = await import('/room.js');
+  const stage = $('room-stage'), ov = $('room-overlay');
+  stage.hidden = false; ov.hidden = false;
+  room = new Room(stage);
+  const close = () => { room?.dispose(); room = null; stage.hidden = true; ov.hidden = true; };
+  room.onEnd = close;
+  try {
+    const sess = await room.start(ov);
+    if (!sess.domOverlayState) ov.hidden = true;   // Brille: dort gibt es die schwebende Werkzeugleiste
+  } catch (e) { close(); toast(`Raum-Modus ging nicht (${e.message})`, 4000); }
+});
+$('room-overlay').addEventListener('beforexrselect', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+$('ro-exit').addEventListener('click', () => room?.end());
+$('ro-add').addEventListener('click', () => room?.addInFront());
+$('ro-undo').addEventListener('click', () => room?.undo());
+$('ro-clear').addEventListener('click', () => room?.clear());
+
 /* ---------------- Player ---------------- */
 let viewer = null, video = null;
 

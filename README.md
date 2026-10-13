@@ -126,6 +126,21 @@ Im Player unten die Hand:
   - Im VR-Menü schaltet „Hände“ durch: Aus → Tracking → Band. Die Kamera startet bei
     Bedarf auch mitten in VR. Der Status steht unten im VR-Menü.
 
+## Raum-Modus (Durchsicht ohne Video)
+
+Auf der Startseite der Würfel-Knopf (nur auf Geräten mit Durchsicht/AR): die Kamera der
+Brille bzw. des Handys zeigt dein Zimmer, und du stellst 3D-Würfel hinein. Die Würfel sind
+im Raum verankert – läufst du herum, bleiben sie stehen.
+
+- **Brille mit Händen:** Pinch ins Leere stellt einen Würfel an die Stelle. Pinch am Würfel
+  = greifen, Hand bewegen/drehen, loslassen = abstellen.
+- **Brille mit Controllern:** Abzug ins Leere = neuer Würfel. Grifftaste oder Abzug am
+  Würfel greift ihn, mit dem Strahl auch aus der Ferne.
+- **Handy:** Würfel landen auf erkannten Flächen (Ziel-Ring), Würfel antippen und ziehen.
+- Werkzeugleiste (Brille, schwebt unten) bzw. Knöpfe (Handy): Würfel +, Letzten weg,
+  Alle weg, Beenden. Die Würfel werden gespeichert und beim nächsten Start wieder
+  aufgestellt (so genau, wie die Brille den Raum wiedererkennt).
+
 ## Raus aus VR / Durchsicht
 
 - **Brille:** unten im Blickfeld schwebt immer ein kleiner Griff „Menü | Beenden“.
@@ -176,6 +191,7 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/vendor/` | three.js (MIT), lokal mitgeliefert, damit alles offline geht |
 | `public/projection.js` | Formate: Erkennung, Umrechnung, Vorschaubilder, Greenscreen-Auto |
 | `public/band.js` | Rotes Band im Kamerabild finden |
+| `public/room.js` | Raum-Modus: Würfel in der Durchsicht platzieren und greifen |
 | `upload.js` | Hochladen in Stücken mit Fortsetzen (nginx-njs) |
 | `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`), Hochladen/Löschen (`/upload/`) |
 | `docker-entrypoint.sh` | setzt die Version beim Start |

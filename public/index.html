@@ -35,6 +35,7 @@
       </div>
       <div class="top-actions">
         <span id="net" class="chip" title="Verbindung">online</span>
+        <button id="room-btn" class="round" aria-label="Raum-Modus" title="Raum-Modus: Würfel in dein Zimmer stellen" hidden><span class="material">add_box</span></button>
         <button id="up-btn" class="round accent" aria-label="Video hochladen" title="360°-Video hochladen" hidden><span class="material">upload</span></button>
         <input id="up-file" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.m4v,.webm,.mov,.mkv" multiple hidden>
         <button id="menu-btn" class="round" aria-label="Menü"><span class="material">more_vert</span></button>
@@ -152,6 +153,18 @@
       <button id="p-hands" class="round" aria-label="Hände"><span class="material">pan_tool</span></button>
     </div>
   </section>
+
+  <!-- Raum-Modus: Durchsicht ohne Video, Wuerfel in den Raum stellen -->
+  <div id="room-stage" class="room-stage" hidden></div>
+  <div id="room-overlay" class="xr-overlay" hidden>
+    <button id="ro-exit" class="pill xo-exit"><span class="material">close</span>Beenden</button>
+    <div class="ro-hint glass">Auf eine Fläche zielen und „Würfel“ tippen. Würfel antippen und ziehen zum Verschieben.</div>
+    <div class="xo-bar glass">
+      <button id="ro-add" class="pill pill-accent"><span class="material">add_box</span>Würfel</button>
+      <button id="ro-undo" class="round" aria-label="Letzten weg"><span class="material">undo</span></button>
+      <button id="ro-clear" class="round" aria-label="Alle weg"><span class="material">delete</span></button>
+    </div>
+  </div>
 
   <!-- Knoepfe im Handy-Durchsicht-Modus (WebXR DOM-Overlay) -->
   <div id="xr-overlay" class="xr-overlay" hidden>

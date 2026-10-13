@@ -361,7 +361,7 @@ export class VRMenu {
 
     ctx.font = '400 19px system-ui, sans-serif';
     ctx.fillStyle = C.muted; ctx.textAlign = 'center';
-    ctx.fillText('Ins Leere tippen: Menü · Grifftaste halten + bewegen: Video drehen', W / 2, H - 30);
+    ctx.fillText(this.note || 'Ins Leere tippen: Menü · Grifftaste halten + bewegen: Video drehen', W / 2, H - 30);
 
     this.texture.needsUpdate = true;
   }

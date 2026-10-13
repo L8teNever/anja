@@ -785,7 +785,8 @@ async function openPlayer(src, title, item = null) {
   try { const ps = JSON.parse(localStorage.getItem(poseKey)); if (ps) viewer.setPose(ps, true); } catch {}
   viewer.onPose = (p) => { try { localStorage.setItem(poseKey, JSON.stringify(p)); } catch {} if (!$('pos-panel').hidden) syncPosUI(p); };
   viewer.onHands = (on) => { if (on !== (handCfg.mode === 'xr')) { handCfg.mode = on ? 'xr' : 'off'; saveHandCfg(); if (handCfg.mode !== 'band') stopBand(); syncHandUI(); } };
-  viewer.renderer.xr.addEventListener('sessionstart', syncHandUI);
+  viewer.renderer.xr.addEventListener('sessionstart', () => { viewer?.setHole(null); $('band-mark').hidden = true; syncHandUI(); });
+  viewer.onBandStatus = (t) => { if (handCfg.mode === 'band') $('hp-status').textContent = t; };
   viewer.renderer.xr.addEventListener('sessionend', syncHandUI);
   applyHandMode();
   detectFormat(src, item);
@@ -818,12 +819,18 @@ async function openPlayer(src, title, item = null) {
     b.innerHTML = `${icon('ar')}<span>Durchsicht</span>`;
     b.addEventListener('click', async () => {
       try {
+        // Durchsicht braucht die Kamera selbst: normale Kamera vorher freigeben,
+        // das rote Band bekommt das Bild dann direkt von der Durchsicht
+        const hadBand = handCfg.mode === 'band';
+        const androidPhone = /Android/.test(navigator.userAgent) && !/OculusBrowser|Quest|Pico/i.test(navigator.userAgent);
+        if (camStream && androidPhone) { stopBand(); camStream.getTracks().forEach((tr) => tr.stop()); camStream = null; $('cam-bg')?.remove(); $('kp-cam').checked = false; }
+        if (hadBand && androidPhone) viewer.setBand({ on: true, video: null });
         const ov = $('xr-overlay');
         ov.hidden = false;
         syncOverlay();
         const sess = await viewer.startAR(ov);
         if (!sess.domOverlayState) ov.hidden = true;   // Brille: dort gibt es das 3D-Menue
-        sess.addEventListener('end', () => { ov.hidden = true; });
+        sess.addEventListener('end', () => { ov.hidden = true; if (handCfg.mode === 'band') startBand().then(syncHandUI); });
         b.disabled = true;
         sess.addEventListener('end', () => { b.disabled = false; });
       } catch (e) { $('xr-overlay').hidden = true; toast(`Durchsicht ging nicht (${e.message})`, 4000); }
@@ -916,7 +923,8 @@ $('pp-reset').addEventListener('click', () => { if (!viewer) return; viewer.setP
  *   das Video dort durchsichtig, damit man die echte Hand sieht.
  */
 const HAND_KEY = 'anja-hands';
-const handCfg = (() => { try { return { mode: 'off', size: 3.5, sens: 0.5, mark: false, ...JSON.parse(localStorage.getItem(HAND_KEY)) }; } catch { return { mode: 'off', size: 3.5, sens: 0.5, mark: false }; } })();
+const HAND_DEFAULT = { mode: 'off', size: 3.5, sens: 0.5, mark: false, fov: 70 };
+const handCfg = (() => { try { return { ...HAND_DEFAULT, ...JSON.parse(localStorage.getItem(HAND_KEY)) }; } catch { return { ...HAND_DEFAULT }; } })();
 const saveHandCfg = () => { try { localStorage.setItem(HAND_KEY, JSON.stringify(handCfg)); } catch {} };
 let band = null;
 
@@ -927,6 +935,8 @@ function syncHandUI() {
   $('hp-size').value = handCfg.size; $('hv-size').textContent = `${handCfg.size.toFixed(1)}×`;
   $('hp-sens').value = handCfg.sens; $('hv-sens').textContent = `${Math.round(handCfg.sens * 100)} %`;
   $('hp-mark').checked = handCfg.mark;
+  $('hp-fov').value = handCfg.fov; $('hv-fov').textContent = `${handCfg.fov}°`;
+  viewer?.setBand({ on: handCfg.mode === 'band', size: handCfg.size, sens: handCfg.sens, fov: handCfg.fov, video: $('cam-bg') || null });
   if (handCfg.mode === 'xr') $('hp-status').textContent = viewer?.inXR ? 'Hände werden in der Brille angezeigt.' : 'Starte VR oder Durchsicht – dann siehst du deine Hände (Controller ablegen).';
   else if (handCfg.mode === 'off') $('hp-status').textContent = '';
 }
@@ -946,6 +956,7 @@ document.querySelectorAll('input[name=hp-mode]').forEach((r) => r.addEventListen
 $('hp-size').addEventListener('input', (e) => { handCfg.size = Number(e.target.value); saveHandCfg(); syncHandUI(); });
 $('hp-sens').addEventListener('input', (e) => { handCfg.sens = Number(e.target.value); saveHandCfg(); syncHandUI(); });
 $('hp-mark').addEventListener('change', (e) => { handCfg.mark = e.target.checked; saveHandCfg(); });
+$('hp-fov').addEventListener('input', (e) => { handCfg.fov = Number(e.target.value); saveHandCfg(); syncHandUI(); });
 
 async function startBand() {
   if (band) return;
@@ -960,7 +971,7 @@ async function startBand() {
     band.raf = requestAnimationFrame(step);
     if (band.tick++ % 2) return;                     // ~30 Mal pro Sekunde reicht
     const v = $('cam-bg');
-    if (!v || v.readyState < 2 || !viewer) return;
+    if (!v || v.readyState < 2 || !viewer || viewer.inXR) return;   // in der Brille uebernimmt der Viewer
     const vw = v.videoWidth, vh = v.videoHeight;
     const cw = 160, ch = Math.max(1, Math.round((160 * vh) / vw));
     if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }

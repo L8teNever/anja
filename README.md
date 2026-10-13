@@ -112,6 +112,12 @@ Im Player unten die Hand:
 - **Rotes Band** – am Handy: ein rotes Band (z. B. ums Handgelenk) wird von der Kamera
   gesucht, und das Video wird um die Hand herum durchsichtig. Loch-Größe und
   Rot-Empfindlichkeit einstellbar, „Erkanntes Rot markieren“ zeigt, was gefunden wurde.
+  Geht auch in der Brille:
+  - **Durchsicht am Android-Handy:** das Kamerabild kommt direkt aus der Durchsicht
+    (WebXR „camera-access“), das Video wird in Richtung des Bands ausgeschnitten.
+  - **VR:** vorher „Rotes Band“ wählen (Kamera läuft dann), in VR erscheint an der Stelle
+    ein Fenster mit dem Kamerabild deiner Hand. „Kamera-Winkel“ zum Feinjustieren.
+  - Gibt eine Brille dem Browser kein Kamerabild, steht das unten im VR-Menü.
 
 ## Raus aus VR / Durchsicht
 
@@ -162,6 +168,7 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/sw.js` | Service Worker: App-Cache pro Version, Video-Cache mit Range-Antworten |
 | `public/vendor/` | three.js (MIT), lokal mitgeliefert, damit alles offline geht |
 | `public/projection.js` | Formate: Erkennung, Umrechnung, Vorschaubilder, Greenscreen-Auto |
+| `public/band.js` | Rotes Band im Kamerabild finden |
 | `upload.js` | Hochladen in Stücken mit Fortsetzen (nginx-njs) |
 | `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`), Hochladen/Löschen (`/upload/`) |
 | `docker-entrypoint.sh` | setzt die Version beim Start |

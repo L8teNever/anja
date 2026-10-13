@@ -4,7 +4,11 @@ import * as THREE from 'three';
 import { VRButton } from '/vendor/VRButton.js';
 import { VRMenu } from '/vr-menu.js';
 import { DEFAULT_FORMAT, CHROMA_DEFAULT, normalize, params, dirToUV, fromSize } from '/projection.js';
+import { detectRed } from '/band.js';
 
+
+const BLACK = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+BLACK.needsUpdate = true;
 
 export const POSE_DEFAULT = { yaw: 0, pitch: 0, roll: 0, size: 1 };
 
@@ -28,8 +32,10 @@ const HAND_BONES = [
 
 const VERT = `
 varying vec3 vDir;
+varying vec3 vWorldDir;
 void main() {
   vDir = position;
+  vWorldDir = (modelMatrix * vec4(position, 0.0)).xyz;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
@@ -42,6 +48,10 @@ uniform int uFacePos[6];
 uniform int uFaceRot[6];
 uniform float uSwap, uWrap, uEye, uSize;
 uniform vec4 uHole;
+uniform int uBand;               // Rotes Band in VR/Durchsicht: 0 aus, 1 ausschneiden, 2 Kamerafenster
+uniform vec3 uBandDir; uniform float uBandAng;
+uniform sampler2D uCam; uniform mat3 uCamRot; uniform vec2 uCamTan;
+varying vec3 vWorldDir;
 uniform float uKeyOn, uKeyMask; uniform vec3 uKey;
 uniform float uKeyHue, uKeySat, uKeySoft, uKeyChoke, uKeySpill, uKeyLumMin, uKeyLumMax;
 varying vec3 vDir;
@@ -169,6 +179,24 @@ void main() {
     c.a *= a;
     if (uKeyMask > 0.5) c = vec4(vec3(a), 1.0);
   }
+  // Rotes Band in der Brille: Richtung des Bands -> dort ausschneiden (Durchsicht) bzw. in VR
+  // ein Fenster mit dem Kamerabild zeigen
+  if (uBand > 0) {
+    vec3 wd = normalize(vWorldDir);
+    float ang = acos(clamp(dot(wd, uBandDir), -1.0, 1.0));
+    float inside = 1.0 - smoothstep(uBandAng * 0.75, uBandAng, ang);
+    if (uBand == 1) c.a *= 1.0 - inside;
+    else if (inside > 0.0) {
+      vec3 cs = uCamRot * wd;     // Kamera-Raum: x rechts, y oben, -z vorne
+      if (cs.z < -1e-3) {
+        vec2 q = vec2(cs.x / -cs.z / uCamTan.x, cs.y / -cs.z / uCamTan.y) * 0.5 + 0.5;
+        if (q.x >= 0.0 && q.x <= 1.0 && q.y >= 0.0 && q.y <= 1.0) {
+          c.rgb = mix(c.rgb, texture2D(uCam, q).rgb, inside);
+          c.a = max(c.a, inside);
+        }
+      }
+    }
+  }
   // Rotes Band: an der Stelle der Hand ein weiches Loch, damit die echte Hand durchscheint
   if (uHole.w > 0.5) c.a *= smoothstep(uHole.z * 0.75, uHole.z, distance(gl_FragCoord.xy, uHole.xy));
   c.rgb = srgbToLinear(c.rgb);
@@ -231,7 +259,7 @@ export class Viewer {
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
     this.resize();
-    this.renderer.setAnimationLoop(() => this._frame());
+    this.renderer.setAnimationLoop((t, frame) => this._frame(t, frame));
   }
 
   // Ein Shader fuer alle Formate: aus der Blickrichtung wird berechnet, welcher Bildpunkt
@@ -246,6 +274,8 @@ export class Viewer {
       uFacePos: { value: [0, 1, 2, 3, 4, 5] }, uFaceRot: { value: [0, 0, 0, 0, 0, 0] },
       uStereo: { value: 0 }, uSwap: { value: 0 }, uWrap: { value: 1 }, uSize: { value: 1 },
       uHole: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uBand: { value: 0 }, uBandDir: { value: new THREE.Vector3(0, 0, -1) }, uBandAng: { value: 0.2 },
+      uCam: { value: BLACK }, uCamRot: { value: new THREE.Matrix3() }, uCamTan: { value: new THREE.Vector2(0.7, 0.5) },
       uTexSize: { value: new THREE.Vector2(4096, 2048) },
       uKeyOn: { value: 0 }, uKeyMask: { value: 0 }, uKey: { value: new THREE.Color(0x00ff00) },   // sRGB-Werte, nicht linear
       uKeyHue: { value: 0 }, uKeySat: { value: 0 }, uKeySoft: { value: 0 }, uKeyChoke: { value: 0 },
@@ -342,6 +372,7 @@ export class Viewer {
   // overlay: HTML-Element mit Knoepfen, das am Handy ueber dem Kamerabild liegt (DOM-Overlay)
   async startAR(overlay) {
     const init = { optionalFeatures: ['local-floor', 'hand-tracking'] };
+    if (this.band?.on) init.optionalFeatures.push('camera-access');   // Kamerabild fuers rote Band
     if (overlay) { init.optionalFeatures.push('dom-overlay'); init.domOverlay = { root: overlay }; }
     const session = await navigator.xr.requestSession('immersive-ar', init);
     if (!this.chromaState().on) this.setChroma({ on: true });
@@ -456,6 +487,139 @@ export class Viewer {
     const deg = THREE.MathUtils.radToDeg;
     g.moved = Math.max(g.moved, Math.abs(deg(dy)) + Math.abs(deg(dp)));
     this.setPose({ yaw: g.yaw0 + deg(dy) * 1.5, pitch: Math.max(-90, Math.min(90, g.pitch0 + deg(dp) * 1.5)) }, true);
+  }
+
+  /* ---------- Rotes Band in VR / Durchsicht ----------
+   * Kamerabild holen, Rot suchen, daraus eine Blickrichtung machen:
+   *  - Handy-Durchsicht (Android): Kamerabild ueber WebXR "camera-access" (genau ausgerichtet),
+   *    das Video wird in Richtung des Bands ausgeschnitten -> echte Hand sichtbar.
+   *  - VR (Brille/Handy): Kamera per getUserMedia (video-Element), Ausrichtung = Kopf,
+   *    Blickwinkel einstellbar; in VR wird dort ein Fenster mit dem Kamerabild gezeigt.
+   * cfg: { on, size, sens, fov, video }
+   */
+  setBand(cfg) {
+    this.band = { ...(this.band || {}), ...cfg };
+    if (!this.band.on) { this.u.uBand.value = 0; this._bandState = null; }
+    if (this.band.video && this.band.video !== this._camTexVideo) {
+      this._camTex?.dispose();
+      this._camTex = new THREE.VideoTexture(this.band.video);
+      this._camTexVideo = this.band.video;
+      this.u.uCam.value = this._camTex;
+    }
+  }
+
+  _bandStatus(text) {
+    if (this._lastBandStatus === text) return;
+    this._lastBandStatus = text;
+    this.vrMenu.note = text;
+    this.onBandStatus?.(text);
+  }
+
+  _updateBand(frame) {
+    const b = this.band, u = this.u;
+    if (!b?.on) { u.uBand.value = 0; return; }
+    const session = this.renderer.xr.getSession();
+    if (!session) return;
+    const ar = session.environmentBlendMode && session.environmentBlendMode !== 'opaque';
+    const st = this._bandState || (this._bandState = { n: 0, lost: 99, dir: null, ang: 0.2 });
+    const head = new THREE.Quaternion(); this.renderer.xr.getCamera().getWorldQuaternion(head);
+    const vid = b.video && b.video.readyState >= 2 ? b.video : null;
+    const camAccess = session.enabledFeatures?.includes?.('camera-access');
+    const tanX = Math.tan(THREE.MathUtils.degToRad((b.fov || 70) / 2));
+    const tanY = vid ? tanX * (vid.videoHeight / vid.videoWidth) : tanX * 0.75;
+    if (vid) {
+      u.uCamRot.value.setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(head.clone().invert()));
+      u.uCamTan.value.set(tanX, tanY);
+    }
+    if (st.n++ % 3 === 0) {                     // ~20–30 Mal pro Sekunde suchen
+      let found = null;
+      if (camAccess && frame) {
+        const img = this._readCamAccess(frame, session);
+        if (img) {
+          const r = detectRed(img.data, img.w, img.h, b.sens, true);
+          if (r) found = this._dirFromView(img.view, r);
+        }
+      } else if (vid) {
+        const c = this._bandCanvas || (this._bandCanvas = document.createElement('canvas'));
+        const w = 160, h = Math.max(1, Math.round((160 * vid.videoHeight) / vid.videoWidth));
+        if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(vid, 0, 0, w, h);
+        const r = detectRed(ctx.getImageData(0, 0, w, h).data, w, h, b.sens);
+        if (r) {
+          const toDir = (x, y) => new THREE.Vector3((x * 2 - 1) * tanX, -(y * 2 - 1) * tanY, -1).normalize().applyQuaternion(head);
+          const d = toDir(r.x, r.y), e = toDir(Math.min(1, r.x + r.r), r.y);
+          found = { dir: d, ang: d.angleTo(e) };
+        }
+      } else {
+        this._bandStatus(ar ? 'Kein Kamerabild – Durchsicht neu starten' : 'Kein Kamerabild – vor VR „Rotes Band“ wählen');
+        u.uBand.value = 0;
+        return;
+      }
+      if (found) {
+        st.lost = 0;
+        st.dir = st.dir ? st.dir.lerp(found.dir, 0.5).normalize() : found.dir;
+        st.ang += (found.ang - st.ang) * 0.3;
+        this._bandStatus('Rotes Band erkannt');
+      } else if (++st.lost > 6) { st.dir = null; this._bandStatus('Kein rotes Band im Bild'); }
+    }
+    if (!st.dir) { u.uBand.value = 0; return; }
+    u.uBandDir.value.copy(st.dir);
+    u.uBandAng.value = Math.min(1.2, st.ang * (b.size || 3.5));
+    u.uBand.value = ar ? 1 : vid ? 2 : 1;
+  }
+
+  // Bildpunkt im WebXR-Kamerabild -> Richtung in der Welt (genau, ueber die Projektion der Ansicht)
+  _dirFromView(view, r) {
+    const inv = new THREE.Matrix4().fromArray(view.projectionMatrix).invert();
+    const rot = new THREE.Quaternion(view.transform.orientation.x, view.transform.orientation.y, view.transform.orientation.z, view.transform.orientation.w);
+    const toDir = (x, y) => {
+      const p = new THREE.Vector4(x * 2 - 1, (1 - y) * 2 - 1, -1, 1).applyMatrix4(inv);
+      return new THREE.Vector3(p.x / p.w, p.y / p.w, p.z / p.w).normalize().applyQuaternion(rot);
+    };
+    const d = toDir(r.x, r.y), e = toDir(Math.min(1, r.x + r.r), r.y);
+    return { dir: d, ang: d.angleTo(e) };
+  }
+
+  // WebXR-Kamerabild (Android-Durchsicht) klein abzeichnen und auslesen
+  _readCamAccess(frame, session) {
+    try {
+      const gl = this.renderer.getContext();
+      const pose = frame.getViewerPose(this.renderer.xr.getReferenceSpace());
+      const view = pose?.views.find((v) => v.camera);
+      if (!view) return null;
+      this._xrBind = this._xrBind || new XRWebGLBinding(session, gl);
+      const tex = this._xrBind.getCameraImage(view.camera);
+      if (!tex) return null;
+      const W = 160, H = Math.max(1, Math.round((160 * view.camera.height) / view.camera.width));
+      if (!this._ca || this._ca.H !== H) {
+        const vs = '#version 300 es\nout vec2 uv;void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=p;gl_Position=vec4(p*2.0-1.0,0.0,1.0);}';
+        const fs = '#version 300 es\nprecision mediump float;in vec2 uv;uniform sampler2D t;out vec4 o;void main(){o=texture(t,uv);}';
+        const sh = (type, src) => { const x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x); return x; };
+        const prog = gl.createProgram();
+        gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(prog);
+        const rt = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, rt);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        const fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, rt, 0);
+        this._ca = { prog, fbo, rt, H, vao: gl.createVertexArray(), buf: new Uint8Array(W * H * 4), loc: gl.getUniformLocation(prog, 't') };
+      }
+      const ca = this._ca;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, ca.fbo);
+      gl.viewport(0, 0, W, H);
+      gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST); gl.disable(gl.CULL_FACE);
+      gl.colorMask(true, true, true, true);
+      gl.useProgram(ca.prog);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1i(ca.loc, 0);
+      gl.bindVertexArray(ca.vao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, ca.buf);
+      gl.bindVertexArray(null);
+      this.renderer.resetState();     // three.js soll seinen GL-Zustand neu setzen
+      return { data: ca.buf, w: W, h: H, view };
+    } catch { this.renderer.resetState(); return null; }
   }
 
   vrButton() {
@@ -576,7 +740,7 @@ export class Viewer {
     this.camera.updateProjectionMatrix();
   }
 
-  _frame() {
+  _frame(t, frame) {
     if (this.renderer.xr.isPresenting) {
       // In VR steuert die Brille die Kamera
       // three.js gibt dem linken Auge Ebene 1, dem rechten Ebene 2 – die normale Kamera
@@ -584,6 +748,7 @@ export class Viewer {
       this.camera.layers.disable(1);
       this._updateGrab();
       this._updateHands();
+      this._updateBand(frame);
       this.vrMenu.update();
       this.renderer.render(this.scene, this.camera);
       return;
@@ -614,6 +779,7 @@ export class Viewer {
     for (const m of this.mesh.children) m.material.dispose();
     this._geo.dispose();
     for (const h of this.hands) for (const b of h.userData.bones) this.scene.remove(b);
+    this._camTex?.dispose();
     this._sphere.dispose(); this._cyl.dispose(); this._handMatVR.dispose(); this._handMatAR.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();

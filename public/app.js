@@ -368,19 +368,51 @@ function analyze(file) {
   });
 }
 
-function put(url, body, type, onProgress, item) {
+// Cloudflare laesst nur 100 MB pro Anfrage durch -> in 8-MB-Stuecken hochladen.
+// Faellt die Verbindung kurz weg, wird das Stueck wiederholt; ein abgebrochener
+// Upload derselben Datei macht beim naechsten Mal dort weiter, wo er war.
+const CHUNK = 8 * 1024 * 1024;
+
+function sendChunk(url, body, onProgress, item) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
     x.open('PUT', url);
-    if (type) x.setRequestHeader('Content-Type', type);
-    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress?.(e.loaded, e.total); };
-    x.onload = () => (x.status >= 200 && x.status < 300 ? resolve()
-      : reject(new Error(x.status === 413 ? 'Datei zu groß für den Server' : x.status === 403 ? 'Server erlaubt das Hochladen nicht' : `HTTP ${x.status}`)));
-    x.onerror = () => reject(new Error('Verbindung abgebrochen'));
+    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress?.(e.loaded); };
+    x.onload = () => {
+      let data = {};
+      try { data = JSON.parse(x.responseText); } catch {}
+      if (x.status >= 200 && x.status < 300) resolve(data);
+      else reject(Object.assign(new Error(data.error === 'exists' ? 'Datei gibt es schon'
+        : data.error === 'write' ? 'Server-Speicher voll?' : `HTTP ${x.status}`), { status: x.status, data }));
+    };
+    x.onerror = () => reject(Object.assign(new Error('Verbindung abgebrochen – evtl. neu anmelden'), { status: 0 }));
     x.onabort = () => reject(Object.assign(new Error('Abgebrochen'), { name: 'AbortError' }));
     if (item) item.abort = () => x.abort();
     x.send(body);
   });
+}
+
+async function uploadChunked(name, blob, onProgress, item) {
+  const base = `/upload-chunk/${encodeURIComponent(name)}?total=${blob.size}`;
+  if (item) item.cleanup = () => fetch(base, { method: 'DELETE' }).catch(() => {});
+  let offset = 0;
+  try { const r = await fetch(base, { cache: 'no-store' }); if (r.ok) offset = (await r.json()).size || 0; } catch {}
+  do {
+    const end = Math.min(blob.size, offset + CHUNK);
+    for (let tries = 0; ; tries++) {
+      try {
+        const res = await sendChunk(`${base}&offset=${offset}`, blob.slice(offset, end), (got) => onProgress?.(offset + got, blob.size), item);
+        offset = res.size;
+        break;
+      } catch (e) {
+        if (e.name === 'AbortError') throw e;
+        if (e.status === 409 && e.data?.size !== undefined) { offset = e.data.size; break; } // Server hat anderen Stand
+        if (tries >= 5 || (e.status >= 400 && e.status < 500 && e.status !== 408)) throw e;
+        await new Promise((r) => setTimeout(r, 1000 * 2 ** tries));
+      }
+    }
+    onProgress?.(offset, blob.size);
+  } while (offset < blob.size);
 }
 
 async function keepAwake(on) {
@@ -406,8 +438,8 @@ async function uploadFile(file) {
   const names = uploadName(file);
   if (!names) { toast(`„${file.name}“: nur .mp4, .m4v, .webm oder .mov`, 4000); return; }
   const row = uploadRow(niceName(names.base));
-  const item = { abort: null, cancelled: false };
-  row.querySelector('button').addEventListener('click', () => { item.cancelled = true; item.abort?.(); });
+  const item = { abort: null, cleanup: null, cancelled: false };
+  row.querySelector('button').addEventListener('click', () => { item.cancelled = true; item.abort?.(); item.cleanup?.(); });
   const pct = row.querySelector('.up-pct'), bar = row.querySelector('.bar > div'), note = row.querySelector('.up-note');
   uploadsRunning++; keepAwake(true);
   try {
@@ -424,14 +456,16 @@ async function uploadFile(file) {
       note.textContent = `${info.w}×${info.h} · ${kind} · ${fmtTime(info.dur)} · ${fmtBytes(file.size)}`;
     }
     const t0 = Date.now();
-    await put(`/upload/${encodeURIComponent(names.video)}`, file, file.type || 'video/mp4', (got, total) => {
-      const p = Math.floor((got / total) * 100);
+    let start = null; // bei Fortsetzen nur das Neue fuers Tempo zaehlen
+    await uploadChunked(names.video, file, (got, total) => {
+      if (start === null) start = got;
+      const p = total ? Math.floor((got / total) * 100) : 100;
       bar.style.width = `${p}%`;
-      const rate = got / Math.max(1, (Date.now() - t0) / 1000);
+      const rate = (got - start) / Math.max(1, (Date.now() - t0) / 1000);
       const left = rate > 0 ? (total - got) / rate : 0;
       pct.textContent = `${p} % · ${fmtBytes(rate)}/s${left > 5 ? ` · noch ${fmtTime(left)}` : ''}`;
     }, item);
-    if (info.thumb) { try { await put(`/upload/${encodeURIComponent(names.poster)}`, info.thumb, 'image/jpeg'); } catch {} }
+    if (info.thumb) { try { await uploadChunked(names.poster, info.thumb); } catch {} }
     pct.textContent = 'Fertig'; bar.style.width = '100%'; row.classList.add('done');
     toast(`„${niceName(names.base)}“ ist jetzt auf dem Server`);
     setTimeout(() => { row.remove(); if (!$('uploads').children.length) $('uploads').hidden = true; }, 2500);

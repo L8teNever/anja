@@ -1,4 +1,6 @@
-// Bewegliche Figur mit echtem 3D-Modell (models/michelle.glb, Mixamo-Skelett, three.js-Beispielmodell).
+// Bewegliche Figur mit echtem 3D-Modell (models/*.glb, alle mit demselben Mixamo-Skelett).
+// michelle.glb kommt aus den three.js-Beispielen; die anderen wurden mit tools/autorig.js
+// auf Michelles Skelett geriggt, deshalb funktionieren Posen und Griffe bei allen gleich.
 // Bewegen:
 //  - Becken/Bauch greifen: ganze Figur verschieben/drehen (macht room.js)
 //  - jedes Koerperteil greifen: Oberarm dreht die Schulter, Unterarm den Ellbogen, Oberschenkel
@@ -11,7 +13,12 @@ import * as THREE from 'three';
 import { GLTFLoader } from '/vendor/GLTFLoader.js';
 import * as SkeletonUtils from '/vendor/SkeletonUtils.js';
 
-const MODEL = '/models/michelle.glb';
+export const MODELS = [
+  { id: 'michelle', name: 'Michelle', url: '/models/michelle.glb' },
+  { id: 'tsunade', name: 'Tsunade', url: '/models/tsunade.glb' },
+  { id: 'miss-white', name: 'Miss White', url: '/models/miss-white.glb' },
+];
+export const modelInfo = (id) => MODELS.find((m) => m.id === id) || MODELS[0];
 const B = (n) => `mixamorig${n}`;
 
 // Logische Gelenke -> Knochen; dir = Knochen, dessen Lage die Richtung bestimmt (Kind)
@@ -47,17 +54,23 @@ export const POSES = {
 export const POSE_NAMES = Object.keys(POSES);
 const POSE_ORDER = ['spine', 'chest', 'neck', 'lShoulder', 'lElbow', 'rShoulder', 'rElbow', 'lHip', 'lKnee', 'rHip', 'rKnee'];
 
-let gltfP = null;
-export function loadFigureModel() {
-  if (!gltfP) gltfP = new GLTFLoader().loadAsync(MODEL);
-  return gltfP;
+const gltfP = new Map();
+export function loadFigureModel(id) {
+  const m = modelInfo(id);
+  if (!gltfP.has(m.id)) {
+    const p = new GLTFLoader().loadAsync(m.url);
+    p.catch(() => gltfP.delete(m.id));   // beim naechsten Mal neu versuchen
+    gltfP.set(m.id, p);
+  }
+  return gltfP.get(m.id);
 }
 
 export class Figure extends THREE.Group {
-  // erst loadFigureModel() abwarten, dann new Figure(gltf)
-  constructor(gltf) {
+  // erst loadFigureModel(id) abwarten, dann new Figure(gltf, id)
+  constructor(gltf, modelId = 'michelle') {
     super();
     this.isFigure = true;
+    this.modelId = modelInfo(modelId).id;
     this.model = SkeletonUtils.clone(gltf.scene);
     this.add(this.model);
     this.parts = [];                       // fuer Strahl-Treffer

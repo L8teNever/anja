@@ -664,6 +664,7 @@ $('room-overlay').addEventListener('beforexrselect', (e) => { if (e.target.close
 $('ro-exit').addEventListener('click', () => room?.end());
 $('ro-add').addEventListener('click', () => room?.addInFront());
 $('ro-fig').addEventListener('click', () => room?.addInFront('fig'));
+$('ro-model').addEventListener('click', async () => { if (!room) return; await room.nextModel(); toast(`Modell: ${room.modelName}`); });
 $('ro-pose').addEventListener('click', () => room?.nextPose());
 $('ro-undo').addEventListener('click', () => room?.undo());
 $('ro-clear').addEventListener('click', () => room?.clear());

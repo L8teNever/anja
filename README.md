@@ -141,18 +141,28 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
   Würfel legen sich flach hin; mit dem Controller auf den Boden zielen setzt einen Würfel
   genau dorthin. Die Quest kennt die Bodenhöhe aus ihrer Begrenzung – kein Scan nötig.
   Wände und Möbel werden bewusst nicht erkannt.
-- **Figur:** „Figur +“ stellt eine Frau als echtes 3D-Modell (`public/models/michelle.glb`,
-  Mixamo-Skelett, aus den three.js-Beispielen) zu dir gedreht auf den Boden.
+- **Figur:** „Figur +“ stellt eine Frau als echtes 3D-Modell zu dir gedreht auf den Boden.
+  Drei Modelle, alle mit demselben Mixamo-Skelett: **Michelle** (aus den three.js-Beispielen),
+  **Tsunade** und **Miss White** (`public/models/*.glb`). Der Knopf mit dem Modellnamen
+  („Michelle ▸“, am Handy das Personen-Symbol) schaltet durch: die aktive Figur wird an
+  derselben Stelle und in derselben Pose gegen das nächste Modell getauscht, und neue
+  Figuren nutzen dieses Modell. Die Auswahl wird gemerkt, jede gespeicherte Figur behält ihr Modell.
   Becken/Bauch greifen = ganze Figur verschieben/drehen (bleibt aufrecht). Jedes andere
   Körperteil greifen = genau dieses Gelenk drehen (Oberarm, Unterarm, Oberschenkel,
   Unterschenkel, Brust, Kopf). Lila Punkte: Hand/Fuß ziehen – ganzer Arm/Bein folgt,
   Ellbogen/Knie – Knickrichtung. „Pose ▸“: Stehen, Arme hoch, T-Pose, Sitzen, Knien,
   Hocke, Liegen – danach frei anpassen.
+- **Eigene Modelle:** Tsunade und Miss White kamen ohne Skelett (statische T-Pose). Sie wurden
+  mit `tools/autorig.js` auf Michelles Skelett geriggt: Körper vermessen, Gelenke an die
+  passenden Stellen setzen, Hautgewichte von Michelle übertragen. Neue Modelle brauchen
+  ebenfalls eine T-Pose, Blick nach vorne (+Z). Danach in `MODELS` (`public/figure.js`)
+  und `public/sw.js` eintragen. Modelle liegen offline in einem eigenen Cache, der
+  App-Updates übersteht; ändert sich ein Modell, bekommt es einen neuen Dateinamen.
 - **Schwerkraft:** losgelassene Würfel fallen auf den Boden oder auf andere Würfel (stapeln)
   und legen sich flach hin, Figuren fallen auf den Boden – nichts schwebt.
 - **Feste Plätze:** die App hängt alles an einen dauerhaften Raum-Anker – Würfel und Figuren (samt Pose) stehen
   nach Neustart oder App-Update wieder genau am selben Platz.
-- Werkzeugleiste (Brille, schwebt unten) bzw. Knöpfe (Handy): Würfel +, Figur +, Pose ▸,
+- Werkzeugleiste (Brille, schwebt unten) bzw. Knöpfe (Handy): Würfel +, Figur +, Modell ▸, Pose ▸,
   Letztes weg, Alle weg, Beenden. Die Würfel werden gespeichert und beim nächsten Start wieder
   aufgestellt (so genau, wie die Brille den Raum wiedererkennt).
 

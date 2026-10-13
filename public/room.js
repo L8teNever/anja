@@ -11,17 +11,19 @@
 // - Dauerhafter Raum-Anker (Quest): Objekte stehen nach Neustart/App-Update wieder am selben Platz.
 import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
-import { Figure, POSE_NAMES, loadFigureModel } from '/figure.js';
+import { Figure, MODELS, POSE_NAMES, loadFigureModel, modelInfo } from '/figure.js';
 
 const SIZE = 0.2;                       // Wuerfel-Kantenlaenge in Metern
 const COLORS = [0xb69cff, 0x7ee0b0, 0xffb86b, 0xff7a8a, 0x7cc4ff, 0xf5e17a];
 const STORE = 'anja-room-items';
 const OLD_STORE = 'anja-room-cubes';
 const ANCHOR_KEY = 'anja-room-anchor';
-const TW = 900, STATUS_H = 46, ROW_H = 124, COLS = 3;
+const MODEL_KEY = 'anja-room-model';
+const TW = 900, STATUS_H = 46, ROW_H = 124, COLS = 4;
 const TOOLS = [
   { id: 'add', icon: 'add_box', label: 'Würfel +' },
   { id: 'fig', icon: 'person', label: 'Figur +' },
+  { id: 'model', icon: 'person', label: 'Modell ▸' },   // Beschriftung = aktuelles Modell
   { id: 'pose', icon: 'accessibility', label: 'Pose ▸' },
   { id: 'undo', icon: 'undo', label: 'Letztes weg' },
   { id: 'clear', icon: 'delete', label: 'Alle weg' },
@@ -68,7 +70,8 @@ export class Room {
     this.anchorM = new THREE.Matrix4(); // Raum-Anker (Welt <- Anker)
     this.anchored = false;
     this.vel = new Map();               // Fallgeschwindigkeit je Objekt
-    loadFigureModel().catch(() => {});  // 3D-Modell schon mal laden
+    try { this.modelId = modelInfo(localStorage.getItem(MODEL_KEY)).id; } catch { this.modelId = MODELS[0].id; }
+    loadFigureModel(this.modelId).catch(() => {});  // 3D-Modell schon mal laden
 
     // Eingaben: Strahl (controller), Griff (grip), Hand (joints)
     this.inputs = [0, 1].map((i) => {
@@ -117,6 +120,7 @@ export class Room {
 
   get cubes() { return this.items.filter((o) => !o.isFigure); }
   get figures() { return this.items.filter((o) => o.isFigure); }
+  get modelName() { return modelInfo(this.modelId).name; }
 
   resize() {
     const w = this.container.clientWidth || innerWidth, h = this.container.clientHeight || innerHeight;
@@ -193,10 +197,10 @@ export class Room {
   }
 
   // Figur hinstellen, zum Betrachter gedreht, Fuesse auf dem Boden
-  async addFigure(pos, yaw, joints, silent = false) {
+  async addFigure(pos, yaw, joints, silent = false, modelId = this.modelId) {
     let gltf;
-    try { gltf = await loadFigureModel(); } catch { this.note = 'Figur-Modell konnte nicht geladen werden'; this._drawToolbar(); return null; }
-    const f = new Figure(gltf);
+    try { gltf = await loadFigureModel(modelId); } catch { this.note = 'Figur-Modell konnte nicht geladen werden'; this._drawToolbar(); return null; }
+    const f = new Figure(gltf, modelId);
     f.position.copy(pos);
     if (yaw === undefined) {
       const cam = new THREE.Vector3().setFromMatrixPosition(this.renderer.xr.getCamera().matrixWorld);
@@ -234,6 +238,30 @@ export class Room {
     this._drawToolbar(); this._save();
   }
 
+  // Naechstes Modell: gilt fuer neue Figuren und tauscht die aktive Figur aus (Platz und Pose bleiben)
+  async nextModel() {
+    const k = (MODELS.findIndex((m) => m.id === this.modelId) + 1) % MODELS.length;
+    this.modelId = MODELS[k].id;
+    try { localStorage.setItem(MODEL_KEY, this.modelId); } catch {}
+    const old = this.activeFigure || this.figures.at(-1);
+    if (!old) { this.note = `Modell: ${MODELS[k].name} – mit „Figur +“ hinstellen`; this._drawToolbar(); return; }
+    this.note = `${MODELS[k].name} wird geladen …`; this._drawToolbar();
+    let gltf;
+    try { gltf = await loadFigureModel(this.modelId); } catch { this.note = 'Figur-Modell konnte nicht geladen werden'; this._drawToolbar(); return; }
+    if (!this.items.includes(old)) return;
+    const f = new Figure(gltf, this.modelId);
+    f.position.copy(old.position); f.quaternion.copy(old.quaternion);
+    f.setJoints(old.getJoints()); f.poseName = old.poseName;
+    for (const [i, g] of this.grabs) if (g.obj === old || g.fig === old) this.grabs.delete(i);
+    this.vel.delete(old);
+    this.scene.remove(old); old.dispose();
+    this.items[this.items.indexOf(old)] = f;
+    this.scene.add(f); this.activeFigure = f;
+    f.ground(this.floorY);
+    this.note = `Modell: ${MODELS[k].name}`;
+    this._drawToolbar(); this._save();
+  }
+
   // Am Handy: auf die erkannte Flaeche (Ziel-Ring) bzw. vor die Kamera
   addInFront(kind = 'cube') {
     const cam = this.renderer.xr.getCamera();
@@ -258,7 +286,7 @@ export class Room {
       return { p: p.toArray(), q: q.toArray() };
     };
     const data = { v: 2, anchored: this.anchored, items: this.items.map((o) => (o.isFigure
-      ? { t: 'fig', ...loc(o), j: o.getJoints(), pose: o.poseName }
+      ? { t: 'fig', ...loc(o), j: o.getJoints(), pose: o.poseName, m: o.modelId }
       : { t: 'cube', ...loc(o), c: o.userData.color })) };
     try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {}
   }
@@ -278,7 +306,7 @@ export class Room {
       const m = new THREE.Matrix4().compose(new THREE.Vector3().fromArray(o.p), new THREE.Quaternion().fromArray(o.q), new THREE.Vector3(1, 1, 1)).premultiply(M);
       const p = new THREE.Vector3(), q = new THREE.Quaternion(); m.decompose(p, q, new THREE.Vector3());
       if (o.t === 'fig') {
-        const f = await this.addFigure(p, 0, o.j, true);
+        const f = await this.addFigure(p, 0, o.j, true, o.m || 'michelle');
         if (f) { f.quaternion.copy(q); f.poseName = o.pose || 'Stehen'; f.update(); f.measureBottom(); }
       } else this.addCube(p, q, o.c, true);
     }
@@ -498,6 +526,7 @@ export class Room {
         if (f) { this.note = 'Bauch greifen = bewegen · Arm/Bein greifen = Gelenk drehen · lila Punkte = Hand/Fuß'; this._drawToolbar(); }
       });
     } else if (id === 'pose') this.nextPose();
+    else if (id === 'model') this.nextModel();
     else if (id === 'undo') this.undo();
     else if (id === 'clear') this.clear();
     else if (id === 'exit') this.end();
@@ -539,7 +568,7 @@ export class Room {
       ctx.save(); ctx.translate(x + w / 2 - 22, y + 14); ctx.scale(44 / 24, 44 / 24);
       ctx.fillStyle = on ? '#1f1638' : '#f1edf9'; ctx.fill(new Path2D(ICON_PATHS[t.icon] || ICON_PATHS.close)); ctx.restore();
       ctx.font = '600 22px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillStyle = on ? '#1f1638' : '#f1edf9'; ctx.fillText(t.label, x + w / 2, y + ROW_H - 30);
+      ctx.fillStyle = on ? '#1f1638' : '#f1edf9'; ctx.fillText(t.id === 'model' ? `${modelInfo(this.modelId).name} ▸` : t.label, x + w / 2, y + ROW_H - 30);
     });
     this.ttex.needsUpdate = true;
   }

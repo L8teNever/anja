@@ -4,12 +4,11 @@
 //   nah dran oder per Strahl aus der Ferne. Handy: Finger drauf und ziehen.
 // - Figur: am Koerper greifen = ganze Figur bewegen/drehen; an den lila Gelenk-Punkten
 //   ziehen = Arme, Beine, Kopf, Oberkoerper biegen; "Pose ▸" schaltet fertige Posen durch.
-// - Raum (Waende, Boden, Moebel) aus der Raumeinrichtung: Wuerfel stossen an und legen sich flach an.
-// - Dauerhafter Raum-Anker (Quest): Objekte stehen nach Neustart/App-Update wieder am selben Platz,
-//   ohne den Raum neu zu scannen.
+// - Boden: Wuerfel und Figuren koennen nicht unter den Boden; nah am Boden losgelassene
+//   Wuerfel legen sich flach hin. (Quest: Bodenhoehe aus der Begrenzung, kein Scan noetig.)
+// - Dauerhafter Raum-Anker (Quest): Objekte stehen nach Neustart/App-Update wieder am selben Platz.
 import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
-import { RoomScan, alignTo } from '/room-scan.js';
 import { Figure, POSE_NAMES } from '/figure.js';
 
 const SIZE = 0.2;                       // Wuerfel-Kantenlaenge in Metern
@@ -17,18 +16,32 @@ const COLORS = [0xb69cff, 0x7ee0b0, 0xffb86b, 0xff7a8a, 0x7cc4ff, 0xf5e17a];
 const STORE = 'anja-room-items';
 const OLD_STORE = 'anja-room-cubes';
 const ANCHOR_KEY = 'anja-room-anchor';
-const TW = 1024, STATUS_H = 46, ROW_H = 124, COLS = 4;
+const TW = 900, STATUS_H = 46, ROW_H = 124, COLS = 3;
 const TOOLS = [
   { id: 'add', icon: 'add_box', label: 'Würfel +' },
   { id: 'fig', icon: 'person', label: 'Figur +' },
   { id: 'pose', icon: 'accessibility', label: 'Pose ▸' },
   { id: 'undo', icon: 'undo', label: 'Letztes weg' },
   { id: 'clear', icon: 'delete', label: 'Alle weg' },
-  { id: 'scan', icon: 'center_focus_strong', label: 'Raum scannen' },
-  { id: 'show', icon: 'grid_on', label: 'Raum zeigen' },
   { id: 'exit', icon: 'close', label: 'Beenden' },
 ];
 const TH = STATUS_H + Math.ceil(TOOLS.length / COLS) * ROW_H;
+const UP = new THREE.Vector3(0, 1, 0);
+
+// Drehung, die den Wuerfel flach hinlegt: die am meisten senkrechte Achse auf "oben" drehen
+function alignTo(quat, n) {
+  const axes = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)].map((a) => a.applyQuaternion(quat));
+  let best = axes[0], bd = -1;
+  for (const a of axes) { const d = Math.abs(a.dot(n)); if (d > bd) { bd = d; best = a; } }
+  const from = best.clone().multiplyScalar(Math.sign(best.dot(n)) || 1);
+  return new THREE.Quaternion().setFromUnitVectors(from, n).multiply(quat);
+}
+
+// wie weit ein gedrehter Wuerfel unter seine Mitte reicht
+function halfHeight(quat) {
+  const ax = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)].map((a) => a.applyQuaternion(quat));
+  return (SIZE / 2) * (Math.abs(ax[0].y) + Math.abs(ax[1].y) + Math.abs(ax[2].y));
+}
 
 export class Room {
   constructor(container) {
@@ -78,7 +91,7 @@ export class Room {
     this.reticle.matrixAutoUpdate = false; this.reticle.visible = false;
     this.scene.add(this.reticle);
 
-    this.scan = new RoomScan(this.scene);   // erkannter Raum (Flaechen, Raumnetz)
+    this.floorY = 0;                        // Bodenhoehe (local-floor: 0)
     this.settling = new Map();              // Wuerfel -> Ausricht-Animation
 
     // Werkzeugleiste (Brille; am Handy gibt es Bildschirm-Knoepfe)
@@ -108,11 +121,15 @@ export class Room {
 
   // overlay: HTML-Knoepfe fuers Handy (DOM-Overlay)
   async start(overlay) {
-    const init = { optionalFeatures: ['local-floor', 'hand-tracking', 'hit-test', 'plane-detection', 'mesh-detection', 'anchors'] };
+    const init = { optionalFeatures: ['local-floor', 'hand-tracking', 'hit-test', 'anchors'] };
     if (overlay) { init.optionalFeatures.push('dom-overlay'); init.domOverlay = { root: overlay }; }
     const session = await navigator.xr.requestSession('immersive-ar', init);
     try { await this.renderer.xr.setSession(session); }
-    catch { this.renderer.xr.setReferenceSpaceType('local'); await this.renderer.xr.setSession(session); }
+    catch {
+      // ohne Bodenhoehe: Boden grob 1,5 m unter dem Kopf, am Handy aus erkannten Flaechen genauer
+      this.renderer.xr.setReferenceSpaceType('local'); await this.renderer.xr.setSession(session);
+      this.floorY = -1.5; this.floorGuess = true;
+    }
     this.session = session;
     this.phone = !!session.domOverlayState;
     this._needToolbar = true;          // erst im ersten Frame, wenn die Kopfposition bekannt ist
@@ -182,7 +199,7 @@ export class Room {
     f.rotation.set(0, yaw, 0);
     if (joints) f.setJoints(joints);
     this.scene.add(f); this.items.push(f);
-    if (!silent) { f.ground(this.scan.floorY()); this._save(); }
+    if (!silent) { f.ground(this.floorY); this._save(); }
     this.activeFigure = f;
     return f;
   }
@@ -205,7 +222,7 @@ export class Room {
     if (!f) { this.note = 'Erst eine Figur hinstellen'; this._drawToolbar(); return; }
     const k = (POSE_NAMES.indexOf(f.poseName) + 1) % POSE_NAMES.length;
     f.setPose(POSE_NAMES[k]);
-    f.ground(this.scan.floorY());
+    f.ground(this.floorY);
     this.note = `Pose: ${POSE_NAMES[k]} – Gelenke (lila Punkte) ziehen zum Anpassen`;
     this._drawToolbar(); this._save();
   }
@@ -349,13 +366,18 @@ export class Room {
     }
     // 4) ins Leere: neuen Wuerfel hinstellen
     if (kind !== 'select') return;
-    if (pt && !pt.hand) {      // Controller zielt auf Boden/Tisch/Wand: genau dort hinsetzen
-      const sh = this._rayHit(inp, this.scan.surfaces);
-      if (sh && sh.distance < 5 && sh.face) {
-        const n = sh.face.normal.clone().transformDirection(sh.object.matrixWorld);
-        if (n.dot(this.raycaster.ray.direction) > 0) n.negate();
-        this.addCube(sh.point.clone().addScaledVector(n, SIZE / 2 + 0.002), alignTo(new THREE.Quaternion(), n));
-        return;
+    if (pt && !pt.hand) {      // Controller zielt auf den Boden: genau dort hinsetzen
+      const r = this.raycaster.ray;
+      this._rayHit(inp, []);   // Strahl setzen
+      if (r.direction.y < -0.05) {
+        const tt = (this.floorY - r.origin.y) / r.direction.y;
+        if (tt > 0 && tt < 6) {
+          const p = r.origin.clone().addScaledVector(r.direction, tt);
+          p.y = this.floorY + SIZE / 2;
+          const yaw = Math.atan2(r.direction.x, r.direction.z);
+          this.addCube(p, new THREE.Quaternion().setFromAxisAngle(UP, yaw));
+          return;
+        }
       }
     }
     if (pt) {
@@ -396,16 +418,21 @@ export class Room {
     const g = this.grabs.get(i);
     if (!this.grabs.delete(i)) return;
     if (g.kind === 'cube') this._settle(g.obj);
-    else if (g.kind === 'fig') g.fig.ground(this.scan.floorY());
+    else if (g.kind === 'fig') g.fig.ground(this.floorY);
     this._save(); this._pulse(i, 0.3, 20);
   }
 
-  // Beruehrt der Wuerfel eine Flaeche (Boden, Tisch, Wand, Moebel), legt er sich flach daran
+  // nicht unter den Boden
+  _floorClamp(cube) {
+    const h = halfHeight(cube.quaternion);
+    if (cube.position.y - h < this.floorY) cube.position.y = this.floorY + h;
+  }
+
+  // Nah am Boden losgelassen: flach hinlegen
   _settle(cube) {
-    this.scan.resolve(cube, SIZE, null);
-    const ct = this.scan.contact(cube, SIZE, 0.05);
-    if (!ct) return;
-    this.settling.set(cube, { q0: cube.quaternion.clone(), q1: alignTo(cube.quaternion, ct.normal), t0: performance.now() });
+    this._floorClamp(cube);
+    if (cube.position.y - halfHeight(cube.quaternion) > this.floorY + 0.05) return;
+    this.settling.set(cube, { q0: cube.quaternion.clone(), q1: alignTo(cube.quaternion, UP), t0: performance.now() });
   }
 
   _pulse(i, v, ms) { try { this.inputs[i].source?.gamepad?.hapticActuators?.[0]?.pulse(v, ms); } catch {} }
@@ -419,11 +446,6 @@ export class Room {
     } else if (id === 'pose') this.nextPose();
     else if (id === 'undo') this.undo();
     else if (id === 'clear') this.clear();
-    else if (id === 'scan') {
-      // Quest: startet die Raumeinrichtung (nur noetig, wenn der Raum noch nie eingerichtet wurde)
-      if (this.session?.initiateRoomCapture) this.session.initiateRoomCapture().catch(() => { this.note = 'Raum-Scan nicht möglich'; this._drawToolbar(); });
-      else { this.note = 'Raum-Scan gibt es auf diesem Gerät nicht'; this._drawToolbar(); }
-    } else if (id === 'show') { this.scan.setShow(!this.scan.show); this._drawToolbar(); }
     else if (id === 'exit') this.end();
   }
 
@@ -448,10 +470,7 @@ export class Room {
   _drawToolbar() {
     const ctx = this.tcanvas.getContext('2d');
     ctx.clearRect(0, 0, TW, TH);
-    const { planes, meshes } = this.scan.count;
-    const status = this.note || (planes || meshes
-      ? `Raum erkannt: ${planes} Flächen${meshes ? `, ${meshes} Raumnetz${meshes > 1 ? 'e' : ''}` : ''}${this.anchored ? ' · Plätze werden gemerkt' : ''}`
-      : 'Kein Raum erkannt – „Raum scannen“ (einmalig, Quest-Raumeinrichtung)');
+    const status = this.note || `Pinch/Abzug ins Leere: Würfel · Boden erkannt${this.anchored ? ' · Plätze werden gemerkt' : ''}`;
     ctx.font = '500 22px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const sw = Math.min(TW - 16, ctx.measureText(status).width + 36);
     ctx.fillStyle = 'rgba(22,19,31,0.85)';
@@ -460,7 +479,7 @@ export class Room {
     const w = TW / COLS;
     TOOLS.forEach((t, k) => {
       const x = (k % COLS) * w, y = STATUS_H + Math.floor(k / COLS) * ROW_H;
-      const on = this.toolHover === t.id || (t.id === 'show' && this.scan.show);
+      const on = this.toolHover === t.id;
       ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x + 6, y + 4, w - 12, ROW_H - 10, 26) : ctx.rect(x + 6, y + 4, w - 12, ROW_H - 10);
       ctx.fillStyle = on ? 'rgba(182,156,255,0.92)' : 'rgba(22,19,31,0.85)'; ctx.fill();
       ctx.save(); ctx.translate(x + w / 2 - 22, y + 14); ctx.scale(44 / 24, 44 / 24);
@@ -486,13 +505,17 @@ export class Room {
       const hits = frame.getHitTestResults(this.hitSource);
       const pose = hits[0]?.getPose(this.renderer.xr.getReferenceSpace());
       this.reticle.visible = !!pose && this.phone;
-      if (pose) this.reticle.matrix.fromArray(pose.transform.matrix);
+      if (pose) {
+        this.reticle.matrix.fromArray(pose.transform.matrix);
+        // ohne bekannte Bodenhoehe: tiefste waagrechte Flaeche unter dem Kopf ist der Boden
+        if (this.floorGuess) {
+          const n = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(this.reticle.matrix));
+          const y = pose.transform.position.y;
+          const head = new THREE.Vector3().setFromMatrixPosition(this.renderer.xr.getCamera().matrixWorld).y;
+          if (n.y > 0.9 && y < head - 0.8 && (this._floorSeen === undefined || y < this._floorSeen)) { this._floorSeen = y; this.floorY = y; }
+        }
+      }
     }
-    // erkannten Raum aktualisieren
-    const before = this.scan.count;
-    this.scan.update(frame, this.renderer.xr.getReferenceSpace());
-    const after = this.scan.count;
-    if (before.planes !== after.planes || before.meshes !== after.meshes) { this.note = ''; this._drawToolbar(); }
     // gesammelte Druecke mit aktueller Pose verarbeiten
     const pend = this.pending; this.pending = [];
     for (const e of pend) {
@@ -519,21 +542,21 @@ export class Room {
       if (g.kind === 'fig') {
         // Figur bleibt aufrecht: nur die Drehung um die Hochachse uebernehmen
         if (quat) { const e = new THREE.Euler().setFromQuaternion(quat, 'YXZ'); g.obj.rotation.set(0, e.y, 0); }
-        const fy = this.scan.floorY();
+        const fy = this.floorY;
         g.obj.updateMatrixWorld(true);
         const box = new THREE.Box3(); g.fig.parts.forEach((p) => box.expandByObject(p));
         if (box.min.y < fy) g.obj.position.y += fy - box.min.y;   // nicht in den Boden
       } else {
         if (quat) g.obj.quaternion.copy(quat);
-        this.scan.resolve(g.obj, SIZE, g.last || null);           // nicht in Waende/Boden/Moebel
-        g.last = g.obj.position.clone();
+        this._floorClamp(g.obj);                                  // nicht unter den Boden
       }
     }
     // sanft flach anlegen
     for (const [c, a] of this.settling) {
       const k = Math.min(1, (performance.now() - a.t0) / 180);
       c.quaternion.slerpQuaternions(a.q0, a.q1, k);
-      if (k >= 1) { this.settling.delete(c); this.scan.resolve(c, SIZE, null); this._save(); }
+      c.position.y = this.floorY + halfHeight(c.quaternion);   // liegt auf dem Boden auf
+      if (k >= 1) { this.settling.delete(c); this._save(); }
     }
     // Hervorheben, was man gerade greifen koennte
     let hoverTool = null;
@@ -574,7 +597,6 @@ export class Room {
     window.removeEventListener('resize', this._onResize);
     for (const o of this.items) { if (o.isFigure) o.dispose(); else { o.material.dispose(); o.children.forEach((k) => k.material.dispose()); } }
     this.geo.dispose(); this.edges.dispose(); this.ttex.dispose();
-    this.scan.setShow(false);
     this.renderer.dispose(); this.renderer.domElement.remove();
   }
 }

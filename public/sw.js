@@ -20,6 +20,7 @@ const SHELL = [
   '/projection.js',
   '/band.js',
   '/room.js',
+  '/room-scan.js',
   '/icons.js',
   '/vendor/three.module.min.js',
   '/vendor/VRButton.js',

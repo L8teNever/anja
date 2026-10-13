@@ -137,8 +137,14 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
 - **Brille mit Controllern:** Abzug ins Leere = neuer Würfel. Grifftaste oder Abzug am
   Würfel greift ihn, mit dem Strahl auch aus der Ferne.
 - **Handy:** Würfel landen auf erkannten Flächen (Ziel-Ring), Würfel antippen und ziehen.
+- **Raum erkennen:** die Quest liefert aus der Raumeinrichtung Wände, Boden, Tische und
+  das Raumnetz (WebXR plane-/mesh-detection). Dann stoßen Würfel an Wänden, Boden und
+  Möbeln an statt hineinzugehen, legen sich beim Abstellen flach an die Fläche, und mit
+  dem Controller zielt man direkt auf Boden/Tisch/Wand zum Hinsetzen. „Raum scannen“
+  startet die Raumeinrichtung, „Raum zeigen“ blendet die erkannten Flächen ein/aus.
+  Am Handy richtet sich der Würfel nach der erkannten Fläche aus.
 - Werkzeugleiste (Brille, schwebt unten) bzw. Knöpfe (Handy): Würfel +, Letzten weg,
-  Alle weg, Beenden. Die Würfel werden gespeichert und beim nächsten Start wieder
+  Alle weg, Raum scannen, Raum zeigen, Beenden. Die Würfel werden gespeichert und beim nächsten Start wieder
   aufgestellt (so genau, wie die Brille den Raum wiedererkennt).
 
 ## Raus aus VR / Durchsicht
@@ -209,6 +215,7 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/projection.js` | Formate: Erkennung, Umrechnung, Vorschaubilder, Greenscreen-Auto |
 | `public/band.js` | Rotes Band im Kamerabild finden |
 | `public/room.js` | Raum-Modus: Würfel in der Durchsicht platzieren und greifen |
+| `public/room-scan.js` | Erkannter Raum: Kollision, Andocken an Flächen |
 | `upload.js` | Hochladen in Stücken mit Fortsetzen (nginx-njs) |
 | `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`), Hochladen/Löschen (`/upload/`) |
 | `docker-entrypoint.sh` | setzt die Version beim Start |

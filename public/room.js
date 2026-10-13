@@ -7,15 +7,18 @@
 // Pinch/Abzug/Tippen ins Leere stellt einen neuen Wuerfel hin.
 import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
+import { RoomScan, alignTo } from '/room-scan.js';
 
 const SIZE = 0.2;                       // Kantenlaenge in Metern
 const COLORS = [0xb69cff, 0x7ee0b0, 0xffb86b, 0xff7a8a, 0x7cc4ff, 0xf5e17a];
 const STORE = 'anja-room-cubes';
-const TW = 768, TH = 160;               // Werkzeugleiste (Canvas-Pixel)
+const TW = 1152, TH = 210;              // Werkzeugleiste (Canvas-Pixel)
 const TOOLS = [
   { id: 'add', icon: 'add_box', label: 'Würfel +' },
   { id: 'undo', icon: 'undo', label: 'Letzten weg' },
   { id: 'clear', icon: 'delete', label: 'Alle weg' },
+  { id: 'scan', icon: 'center_focus_strong', label: 'Raum scannen' },
+  { id: 'show', icon: 'grid_on', label: 'Raum zeigen' },
   { id: 'exit', icon: 'close', label: 'Beenden' },
 ];
 
@@ -65,10 +68,13 @@ export class Room {
     this.reticle.matrixAutoUpdate = false; this.reticle.visible = false;
     this.scene.add(this.reticle);
 
+    this.scan = new RoomScan(this.scene);   // erkannter Raum (Flaechen, Raumnetz)
+    this.settling = new Map();              // Wuerfel -> Ausricht-Animation
+
     // Werkzeugleiste (fuer Brillen; am Handy gibt es Bildschirm-Knoepfe)
     this.tcanvas = document.createElement('canvas'); this.tcanvas.width = TW; this.tcanvas.height = TH;
     this.ttex = new THREE.CanvasTexture(this.tcanvas); this.ttex.colorSpace = THREE.SRGBColorSpace;
-    this.toolbar = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.56 * TH / TW),
+    this.toolbar = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.84 * TH / TW),
       new THREE.MeshBasicMaterial({ map: this.ttex, transparent: true, depthTest: false }));
     this.toolbar.renderOrder = 10; this.toolbar.visible = false;
     this.scene.add(this.toolbar);
@@ -89,7 +95,7 @@ export class Room {
 
   // overlay: HTML-Knoepfe fuers Handy (DOM-Overlay)
   async start(overlay) {
-    const init = { optionalFeatures: ['local-floor', 'hand-tracking', 'hit-test'] };
+    const init = { optionalFeatures: ['local-floor', 'hand-tracking', 'hit-test', 'plane-detection', 'mesh-detection'] };
     if (overlay) { init.optionalFeatures.push('dom-overlay'); init.domOverlay = { root: overlay }; }
     const session = await navigator.xr.requestSession('immersive-ar', init);
     try { await this.renderer.xr.setSession(session); }
@@ -117,6 +123,7 @@ export class Room {
     if (quat) m.quaternion.copy(quat);
     m.userData.color = col;
     this.scene.add(m); this.cubes.push(m);
+    if (!quat || !this._loading) this._settle(m);
     this._save();
     return m;
   }
@@ -135,8 +142,11 @@ export class Room {
   // Am Handy: Wuerfel auf die erkannte Flaeche (Ziel-Ring) bzw. 80 cm vor die Kamera
   addInFront() {
     if (this.reticle.visible) {
+      // auf die Flaeche, flach ausgerichtet (y-Achse des Treffers = Flaechennormale)
       const p = new THREE.Vector3().setFromMatrixPosition(this.reticle.matrix);
-      return this.addCube(p.add(new THREE.Vector3(0, SIZE / 2, 0)));
+      const q = new THREE.Quaternion().setFromRotationMatrix(this.reticle.matrix);
+      const n = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+      return this.addCube(p.addScaledVector(n, SIZE / 2), q);
     }
     const cam = this.renderer.xr.getCamera();
     const p = new THREE.Vector3(0, 0, -0.8).applyMatrix4(cam.matrixWorld);
@@ -153,7 +163,9 @@ export class Room {
     if (this.cubes.length) return;
     let list = [];
     try { list = JSON.parse(localStorage.getItem(STORE)) || []; } catch {}
+    this._loading = true;
     for (const o of list) this.addCube(new THREE.Vector3().fromArray(o.p), new THREE.Quaternion().fromArray(o.q), o.c);
+    this._loading = false;
   }
 
   /* ---------- Eingaben ---------- */
@@ -197,7 +209,7 @@ export class Room {
     // 1) Werkzeugleiste
     if (this.toolbar.visible) {
       const h = this._rayHit(inp, [this.toolbar]);
-      if (h) { this._tool(TOOLS[Math.min(TOOLS.length - 1, Math.floor(h.uv.x * TOOLS.length))].id); return; }
+      if (h) { if (h.uv.y < 1 - 50 / TH) this._tool(TOOLS[Math.min(TOOLS.length - 1, Math.floor(h.uv.x * TOOLS.length))].id); return; }
     }
     // 2) nah greifen (Hand/Controller am Wuerfel)
     const pt = this._point(inp);
@@ -210,6 +222,17 @@ export class Room {
     if (hit) { this._grabRay(i, hit.object, hit.distance); return; }
     // 4) ins Leere: neuen Wuerfel hinstellen
     if (kind !== 'select') return;
+    // Controller zielt auf eine erkannte Flaeche (Boden, Tisch, Wand): genau dort hinsetzen
+    if (pt && !pt.hand) {
+      const sh = this._rayHit(inp, this.scan.surfaces);
+      if (sh && sh.distance < 5 && sh.face) {
+        const n = sh.face.normal.clone().transformDirection(sh.object.matrixWorld);
+        if (n.dot(this.raycaster.ray.direction) > 0) n.negate();
+        const q = alignTo(new THREE.Quaternion(), n);
+        this.addCube(sh.point.clone().addScaledVector(n, SIZE / 2 + 0.002), q);
+        return;
+      }
+    }
     if (pt) {
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(inp.ray.matrixWorld));
       this.addCube(pt.hand ? pt.pos.clone() : pt.pos.clone().addScaledVector(fwd, 0.35));
@@ -232,12 +255,29 @@ export class Room {
   }
 
   _release(i) {
-    if (this.grabs.delete(i)) { this._save(); this._pulse(i, 0.3, 20); }
+    const g = this.grabs.get(i);
+    if (this.grabs.delete(i)) { this._settle(g.cube); this._save(); this._pulse(i, 0.3, 20); }
+  }
+
+  // Beruehrt der Wuerfel eine Flaeche (Boden, Tisch, Wand, Moebel), legt er sich flach daran
+  _settle(cube) {
+    this.scan.resolve(cube, SIZE, null);
+    const ct = this.scan.contact(cube, SIZE, 0.05);
+    if (!ct) return;
+    const q = alignTo(cube.quaternion, ct.normal);
+    this.settling.set(cube, { q0: cube.quaternion.clone(), q1: q, t0: performance.now() });
   }
 
   _pulse(i, v, ms) { try { this.inputs[i].source?.gamepad?.hapticActuators?.[0]?.pulse(v, ms); } catch {} }
 
   _tool(id) {
+    if (id === 'scan') {
+      // Quest: startet die Raumeinrichtung (Waende, Moebel scannen)
+      if (this.session?.initiateRoomCapture) this.session.initiateRoomCapture().catch(() => { this.note = 'Raum-Scan nicht möglich'; this._drawToolbar(); });
+      else { this.note = 'Raum-Scan gibt es auf diesem Gerät nicht'; this._drawToolbar(); }
+      return;
+    }
+    if (id === 'show') { this.scan.setShow(!this.scan.show); this._drawToolbar(); return; }
     if (id === 'add') {
       const cam = this.renderer.xr.getCamera();
       this.addCube(new THREE.Vector3(0, -0.15, -0.6).applyMatrix4(cam.matrixWorld));
@@ -267,15 +307,25 @@ export class Room {
   _drawToolbar() {
     const ctx = this.tcanvas.getContext('2d');
     ctx.clearRect(0, 0, TW, TH);
-    const w = TW / TOOLS.length;
+    // Statuszeile: was vom Raum erkannt ist
+    const { planes, meshes } = this.scan.count;
+    const status = this.note || (planes || meshes
+      ? `Raum erkannt: ${planes} Flächen${meshes ? `, ${meshes} Raumnetz${meshes > 1 ? 'e' : ''}` : ''} – Würfel stoßen an und legen sich flach an`
+      : 'Kein Raum erkannt – „Raum scannen“ (Quest-Raumeinrichtung)');
+    ctx.font = '500 24px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(22,19,31,0.85)';
+    const tw = Math.min(TW - 20, ctx.measureText(status).width + 40);
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect((TW - tw) / 2, 2, tw, 40, 20) : ctx.rect((TW - tw) / 2, 2, tw, 40); ctx.fill();
+    ctx.fillStyle = '#f1edf9'; ctx.fillText(status, TW / 2, 23);
+    const w = TW / TOOLS.length, y0 = 50, bh = TH - y0;
     TOOLS.forEach((t, k) => {
-      const x = k * w, on = this.toolHover === t.id;
-      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x + 6, 6, w - 12, TH - 12, 28) : ctx.rect(x + 6, 6, w - 12, TH - 12);
+      const x = k * w, on = this.toolHover === t.id || (t.id === 'show' && this.scan.show);
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x + 6, y0 + 4, w - 12, bh - 10, 28) : ctx.rect(x + 6, y0 + 4, w - 12, bh - 10);
       ctx.fillStyle = on ? 'rgba(182,156,255,0.92)' : 'rgba(22,19,31,0.85)'; ctx.fill();
-      ctx.save(); ctx.translate(x + w / 2 - 26, 22); ctx.scale(52 / 24, 52 / 24);
+      ctx.save(); ctx.translate(x + w / 2 - 26, y0 + 18); ctx.scale(52 / 24, 52 / 24);
       ctx.fillStyle = on ? '#1f1638' : '#f1edf9'; ctx.fill(new Path2D(ICON_PATHS[t.icon] || ICON_PATHS.close)); ctx.restore();
-      ctx.font = '600 26px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillStyle = on ? '#1f1638' : '#f1edf9'; ctx.fillText(t.label, x + w / 2, TH - 36);
+      ctx.font = '600 23px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = on ? '#1f1638' : '#f1edf9'; ctx.fillText(t.label, x + w / 2, TH - 34);
     });
     this.ttex.needsUpdate = true;
   }
@@ -291,6 +341,11 @@ export class Room {
       this.reticle.visible = !!pose && this.phone;
       if (pose) this.reticle.matrix.fromArray(pose.transform.matrix);
     }
+    // erkannten Raum aktualisieren (Flaechen, Raumnetz)
+    const before = this.scan.count;
+    this.scan.update(frame, this.renderer.xr.getReferenceSpace());
+    const after = this.scan.count;
+    if (before.planes !== after.planes || before.meshes !== after.meshes) { this.note = ''; this._drawToolbar(); }
     // gesammelte Druecke mit aktueller Pose verarbeiten
     const pend = this.pending; this.pending = [];
     for (const e of pend) {
@@ -311,6 +366,15 @@ export class Room {
         const dir = new THREE.Vector3(0, 0, -1).applyMatrix4(m);
         g.cube.position.copy(origin).addScaledVector(dir, g.dist);
       }
+      // nicht in Waende, Boden oder Moebel hinein
+      this.scan.resolve(g.cube, SIZE, g.last || null);
+      g.last = g.cube.position.clone();
+    }
+    // sanft flach anlegen
+    for (const [c, a] of this.settling) {
+      const k = Math.min(1, (performance.now() - a.t0) / 180);
+      c.quaternion.slerpQuaternions(a.q0, a.q1, k);
+      if (k >= 1) { this.settling.delete(c); this.scan.resolve(c, SIZE, null); this._save(); }
     }
     // Hervorheben, was man gerade greifen koennte
     let hoverTool = null;
@@ -342,6 +406,7 @@ export class Room {
     window.removeEventListener('resize', this._onResize);
     this.cubes.forEach((c) => { c.material.dispose(); c.children.forEach((k) => k.material.dispose()); });
     this.geo.dispose(); this.edges.dispose(); this.ttex.dispose();
+    this.scan.setShow(false);
     this.renderer.dispose(); this.renderer.domElement.remove();
   }
 }

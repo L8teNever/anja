@@ -187,6 +187,7 @@ function groupVideos(files) {
   return out.sort((a, b) => a.base.localeCompare(b.base, 'de'));
 }
 
+let lastItems = [];   // aktuelle Videoliste (auch fuer die Videos-Seite in der Brille)
 let serverNames = new Set(); // Dateinamen ohne Endung, klein – gegen doppelte Namen beim Hochladen
 
 async function loadList() {
@@ -219,6 +220,7 @@ async function loadList() {
     if (!f.format) { const n = fromName(f.name); if (n.kind || n.stereo) f.format = normalize(n); }
   }));
 
+  lastItems = items;
   list.innerHTML = '';
   for (const f of items) {
     const path = `/videos/${encodeURIComponent(f.name)}`;
@@ -664,6 +666,103 @@ $('ro-add').addEventListener('click', () => room?.addInFront());
 $('ro-undo').addEventListener('click', () => room?.undo());
 $('ro-clear').addEventListener('click', () => room?.clear());
 
+/* ---------------- Einstellungen in der Brille ----------------
+ * Dieselben Einstellungen wie auf der Webseite, als Tafel im VR-Menue ("Optionen").
+ * Jede Aenderung wirkt sofort live und wird genauso gespeichert.
+ */
+function setFormatManual(f) {
+  if (!viewer) return;
+  if (fmtCtx) { fmtCtx.manual = true; clearTimeout(fmtCtx.timer); }
+  viewer.setFormat(f, 'Manuell');
+  try { localStorage.setItem(`anja-format:${fmtCtx?.src}`, JSON.stringify(viewer.format)); } catch {}
+}
+
+function vrPages() {
+  if (!viewer) return [];
+  const f = viewer.format, ch = viewer.chromaState(), ps = viewer.pose;
+  const pct = (v) => `${Math.round(v * 100)} %`, deg = (v) => `${Math.round(v)}°`;
+  const canSave = uploadEnabled && navigator.onLine;
+  const pages = [];
+
+  pages.push({ title: 'Videos', items: [
+    { type: 'info', text: lastItems.length ? 'Antippen zum Wechseln – VR bleibt an.' : 'Keine Videos in der Liste.' },
+    { type: 'chips', perPage: 12, chips: lastItems.map((it) => ({
+      label: niceName(it.base), active: curItem?.name === it.name,
+      action: () => openPlayer(`/videos/${encodeURIComponent(it.name)}`, niceName(it.base), it),
+    })) },
+  ] });
+
+  pages.push({ title: 'Format', items: [
+    { type: 'choice', label: 'Projektion', options: Object.entries(PROJ_LABEL).map(([v, l]) => ({ v, l: l.replace(' (Kino-Leinwand)', '').replace(' (Standard)', '') })),
+      get: () => f.kind, set: (v) => setFormatManual({ ...f, kind: v, fov: defaultFov(v) || f.fov }) },
+    { type: 'choice', label: '3D', options: Object.entries(STEREO_LABEL).map(([v, l]) => ({ v, l })), get: () => f.stereo, set: (v) => setFormatManual({ ...f, stereo: v }) },
+    { type: 'toggle', label: 'Augen tauschen', hidden: f.stereo === 'mono', get: () => f.swap, set: (v) => setFormatManual({ ...f, swap: v }) },
+    { type: 'slider', label: 'Blickwinkel', hidden: !['fisheye', 'dfisheye', 'flat'].includes(f.kind), min: 40, max: 240, step: 1,
+      get: () => f.fov, set: (v) => setFormatManual({ ...f, fov: v }), fmt: deg },
+    { type: 'buttons', buttons: [
+      { label: 'Automatisch erkennen', action: () => $('fp-auto').click() },
+      ...(canSave ? [{ label: 'Für alle speichern', action: () => $('fp-save').click() }] : []),
+    ] },
+    { type: 'info', text: `Erkannt über: ${viewer.formatSource}` },
+  ] });
+
+  pages.push({ title: 'Greenscreen', items: [
+    { type: 'toggle', label: 'Hintergrund weg', get: () => ch.on, set: (v) => { viewer.setChroma({ on: v }); if (v && viewer.chromaState().color === CHROMA_DEFAULT.color) autoKeyNow(false); } },
+    { type: 'buttons', buttons: [
+      { label: 'Auto-Farbe', action: () => autoKeyNow(false) },
+      { label: viewer.vrMenu.picking ? 'Pipette: ins Video zeigen …' : 'Pipette', accent: viewer.vrMenu.picking,
+        action: () => viewer.vrMenu.armPick((dir) => { const c = viewer.pickColorDir(dir); if (c) viewer.setChroma({ color: c, on: true }); }) },
+      { label: ch.mask ? 'Maske aus' : 'Maske zeigen', accent: ch.mask, action: () => viewer.setChroma({ mask: !viewer.chromaState().mask, on: true }) },
+      { label: 'Standard', action: () => { viewer.setChroma({ ...CHROMA_DEFAULT, on: true }); autoKeyNow(false); } },
+      ...(canSave ? [{ label: 'Für alle speichern', action: () => $('kp-save').click() }] : []),
+    ] },
+    { type: 'info', text: `Farbe ${ch.color}`, color: ch.color },
+    { type: 'slider', label: 'Farbton-Bereich', min: 4, max: 70, step: 1, get: () => ch.hue, set: (v) => viewer.setChroma({ hue: v, on: true }), fmt: deg },
+    { type: 'slider', label: 'Mindest-Sättigung', min: 0, max: 0.3, step: 0.005, get: () => ch.sat, set: (v) => viewer.setChroma({ sat: v, on: true }), fmt: (v) => `${Math.round(v * 200)} %` },
+    { type: 'slider', label: 'Weiche Kante', min: 0, max: 0.6, step: 0.01, get: () => ch.soft, set: (v) => viewer.setChroma({ soft: v, on: true }), fmt: pct },
+    { type: 'slider', label: 'Kante schrumpfen', min: 0, max: 6, step: 0.5, get: () => ch.choke, set: (v) => viewer.setChroma({ choke: v, on: true }), fmt: (v) => `${v} px` },
+    { type: 'slider', label: 'Grünstich weg', min: 0, max: 1, step: 0.01, get: () => ch.spill, set: (v) => viewer.setChroma({ spill: v, on: true }), fmt: pct },
+    { type: 'slider', label: 'Helligkeit ab', min: 0, max: 0.8, step: 0.01, get: () => ch.lumMin, set: (v) => viewer.setChroma({ lumMin: v, on: true }), fmt: pct },
+    { type: 'slider', label: 'Helligkeit bis', min: 0.2, max: 1, step: 0.01, get: () => ch.lumMax, set: (v) => viewer.setChroma({ lumMax: v, on: true }), fmt: pct },
+  ] });
+
+  pages.push({ title: 'Position', items: [
+    { type: 'slider', label: 'Größe', min: 0.25, max: 2.5, step: 0.01, get: () => ps.size, set: (v) => viewer.setPose({ size: v }), fmt: pct },
+    { type: 'slider', label: 'Drehen', min: -180, max: 180, step: 1, get: () => ps.yaw, set: (v) => viewer.setPose({ yaw: v }), fmt: deg },
+    { type: 'slider', label: 'Neigen', min: -90, max: 90, step: 1, get: () => ps.pitch, set: (v) => viewer.setPose({ pitch: v }), fmt: deg },
+    { type: 'slider', label: 'Kippen', min: -180, max: 180, step: 1, get: () => ps.roll, set: (v) => viewer.setPose({ roll: v }), fmt: deg },
+    { type: 'buttons', buttons: [
+      { label: 'Blick ausrichten', action: () => viewer._recenterXR() },
+      { label: 'Zurücksetzen', action: () => viewer.setPose({ yaw: 0, pitch: 0, roll: 0, size: 1 }) },
+    ] },
+    { type: 'info', text: 'Tipp: Grifftaste halten und Controller bewegen dreht das Video.' },
+  ] });
+
+  const isBand = handCfg.mode === 'band';
+  pages.push({ title: 'Hände', items: [
+    { type: 'choice', label: 'Modus', options: [{ v: 'off', l: 'Aus' }, { v: 'xr', l: 'Hand-Tracking' }, { v: 'band', l: 'Band' }],
+      get: () => handCfg.mode, set: (v) => { handCfg.mode = v; saveHandCfg(); applyHandMode(); } },
+    { type: 'buttons', hidden: !isBand, buttons: [
+      { label: 'Band anlernen (in die Mitte halten)', accent: true, action: () => {
+        const l = viewer.bandFrame() || band?.last;
+        const col = l && learnBand(l.data, l.w, l.h, 0.5, 0.5, 0.22);
+        if (col) { handCfg.color = col; saveHandCfg(); syncHandUI(); }
+      } },
+      { label: 'Standard Rot', action: () => { delete handCfg.color; saveHandCfg(); syncHandUI(); } },
+    ] },
+    { type: 'info', hidden: !isBand, text: `Band-Farbe: ${handCfg.color ? `angelernt (${handCfg.color.hue}°)` : 'Standard Rot'}`,
+      color: `hsl(${(handCfg.color || BAND_DEFAULT).hue} 85% 50%)` },
+    { type: 'slider', hidden: !isBand, label: 'Loch-Größe', min: 1, max: 10, step: 0.1, get: () => handCfg.size,
+      set: (v) => { handCfg.size = v; saveHandCfg(); syncHandUI(); }, fmt: (v) => `${v.toFixed(1)}×` },
+    { type: 'slider', hidden: !isBand, label: 'Empfindlichkeit', min: 0, max: 1, step: 0.01, get: () => handCfg.sens,
+      set: (v) => { handCfg.sens = v; saveHandCfg(); syncHandUI(); }, fmt: pct },
+    { type: 'slider', hidden: !isBand, label: 'Kamera-Winkel', min: 40, max: 120, step: 1, get: () => handCfg.fov,
+      set: (v) => { handCfg.fov = v; saveHandCfg(); syncHandUI(); }, fmt: deg },
+    { type: 'info', text: isBand ? (viewer._lastBandStatus || 'Suche Band …') : handCfg.mode === 'xr' ? 'Controller ablegen – deine Hände werden angezeigt.' : 'Hände aus.' },
+  ] });
+  return pages;
+}
+
 /* ---------------- Player ---------------- */
 let viewer = null, video = null;
 
@@ -789,11 +888,17 @@ $('fp-auto').addEventListener('click', async () => {
   toast('Format wird automatisch erkannt');
 });
 
+let curSrc = null, curItem = null;
+
 async function openPlayer(src, title, item = null) {
+  // In VR/Durchsicht: nur das Video tauschen, die Brille bleibt an
+  const swap = !!viewer?.inXR;
   const { Viewer } = await import('/viewer.js');
   $('p-title').textContent = title;
   $('player').hidden = false;
   $('home').hidden = true;
+  curSrc = src; curItem = item;
+  const oldVideo = video;
 
   video = document.createElement('video');
   video.src = src;
@@ -804,17 +909,35 @@ async function openPlayer(src, title, item = null) {
   video.loop = true;
   video.preload = 'auto';
 
-  viewer = new Viewer($('stage'), video, { title });
+  if (swap) {
+    viewer.setVideo(video, title);
+    oldVideo.pause(); oldVideo.removeAttribute('src'); oldVideo.load();
+  } else {
+    viewer = new Viewer($('stage'), video, { title });
+    setupViewerOnce();
+  }
   viewer.onFormat = (f, source) => { if (!$('fmt-panel').hidden) fillFormatPanel(f, source); };
   // Lage/Groesse pro Video merken
   const poseKey = `anja-pose:${src}`;
-  try { const ps = JSON.parse(localStorage.getItem(poseKey)); if (ps) viewer.setPose(ps, true); } catch {}
+  let ps = null;
+  try { ps = JSON.parse(localStorage.getItem(poseKey)); } catch {}
+  viewer.setPose(ps || { yaw: 0, pitch: 0, roll: 0, size: 1 }, true);
   viewer.onPose = (p) => { try { localStorage.setItem(poseKey, JSON.stringify(p)); } catch {} if (!$('pos-panel').hidden) syncPosUI(p); };
+  if (!swap) setupXRButtons();
+  detectFormat(src, item);
+  setupChroma(src, item);
+  bindVideo();
+  try { await video.play(); } catch { /* Browser will erst einen Tipp */ }
+  if (!swap) history.pushState({ player: true }, '');
+}
+
+// Was nur einmal pro Viewer passiert (Haende, VR-Einstellungen, Ereignisse)
+function setupViewerOnce() {
   viewer.onHands = (on) => { if (on !== (handCfg.mode === 'xr')) { handCfg.mode = on ? 'xr' : 'off'; saveHandCfg(); if (handCfg.mode !== 'band') stopBand(); syncHandUI(); } };
   viewer.renderer.xr.addEventListener('sessionstart', () => { viewer?.setHole(null); $('band-mark').hidden = true; syncHandUI(); });
   viewer.onBandStatus = (t) => { if (handCfg.mode === 'band') $('hp-status').textContent = t; };
   // Im VR-Menue schaltet "Hände" durch: Aus -> Hand-Tracking -> Band -> Aus
-  viewer.handsLabel = () => ({ off: 'Hände', xr: 'Hände: Tracking', band: 'Hände: Band' })[handCfg.mode];
+  viewer.handsLabel = () => ({ off: 'Hände', xr: 'Tracking', band: 'Band' })[handCfg.mode];
   viewer.onHandsCycle = () => {
     handCfg.mode = { off: 'xr', xr: 'band', band: 'off' }[handCfg.mode] || 'off';
     saveHandCfg(); applyHandMode();
@@ -822,12 +945,14 @@ async function openPlayer(src, title, item = null) {
   // Kamera wird gebraucht (z. B. Band in VR eingeschaltet): starten und dem Viewer geben
   viewer.onNeedCamera = async () => { if (handCfg.mode === 'band' && !camStream) { await startBand(); syncHandUI(); } };
   viewer.renderer.xr.addEventListener('sessionend', syncHandUI);
+  viewer.setVRPages(vrPages);
   applyHandMode();
-  detectFormat(src, item);
   const hint = $('tap-hint'); hint.classList.remove('gone');
   viewer.onInteract = () => hint.classList.add('gone');
   setTimeout(() => hint.classList.add('gone'), 4000);
+}
 
+async function setupChroma(src, item) {
   // Greenscreen-Einstellungen: auf diesem Geraet gemerkt > fuer alle gespeichert > Standard.
   // Dateiname mit "green"/"chroma" schaltet es gleich an (Farbe wird dann automatisch gesucht).
   chromaKey = `anja-chroma:${src}`;
@@ -843,7 +968,9 @@ async function openPlayer(src, title, item = null) {
   };
   syncKeyUI(viewer.chromaState());
   if (viewer.chromaState().on && !preset) autoKeyWhenReady(false);
+}
 
+function setupXRButtons() {
   // Durchsicht (AR): Quest-Passthrough bzw. Handy-Kamera mit Raumerkennung
   const arSlot = $('ar-slot'); arSlot.innerHTML = '';
   navigator.xr?.isSessionSupported?.('immersive-ar').then((ok) => {
@@ -883,8 +1010,10 @@ async function openPlayer(src, title, item = null) {
     label();
     slot.appendChild(b);
   }).catch(() => {});
+}
 
-  const v = video; // Ereignisse nach dem Schliessen (video = null) ignorieren
+function bindVideo() {
+  const v = video; // Ereignisse nach dem Schliessen/Wechseln ignorieren
   video.addEventListener('loadedmetadata', () => { if (video === v) $('p-dur').textContent = fmtTime(v.duration); });
   video.addEventListener('timeupdate', () => {
     if (video !== v) return;
@@ -894,9 +1023,6 @@ async function openPlayer(src, title, item = null) {
   video.addEventListener('play', () => { setIcon($('p-play'), 'pause'); syncOverlay(); });
   video.addEventListener('pause', () => { setIcon($('p-play'), 'play_arrow'); syncOverlay(); });
   video.addEventListener('error', () => video === v && toast(navigator.onLine ? 'Video konnte nicht geladen werden' : 'Dieses Video ist nicht offline gespeichert'));
-
-  try { await video.play(); } catch { /* Browser will erst einen Tipp */ }
-  history.pushState({ player: true }, '');
 }
 
 function closePlayer() {

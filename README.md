@@ -150,6 +150,22 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
 - **Überall:** Zurück-Taste/-Geste (bzw. Escape) beendet VR/Durchsicht; ein zweites
   Zurück schließt den Player.
 
+## Einstellungen direkt in der Brille
+
+Im VR-Menü auf **Optionen** (Regler-Symbol): über dem Bedienfeld erscheint eine Tafel
+mit Reitern – alles per Strahl oder Pinch, jede Änderung sofort live im Video:
+
+- **Videos** – anderes Video wählen, VR bleibt an
+- **Format** – Projektion, 3D, Augen tauschen, Blickwinkel, automatisch / für alle speichern
+- **Greenscreen** – an/aus, Auto-Farbe, Pipette (dann ins Video zeigen und drücken),
+  Maske, alle Regler, für alle speichern
+- **Position** – Größe, Drehen, Neigen, Kippen, ausrichten, zurücksetzen
+- **Hände** – Aus / Hand-Tracking / Band, Band anlernen, Loch-Größe, Empfindlichkeit,
+  Kamera-Winkel, Status
+
+Die Bedienfelder auf der Webseite gibt es weiterhin (fürs Handy ohne Brille); beide
+ändern dieselben Einstellungen.
+
 ## Steuerung in der VR-Brille
 
 Im VR-Modus schwebt ein eigenes Menü vor dir: Abspielen/Pause, ±10 Sekunden, Fortschrittsbalken
@@ -186,6 +202,7 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 |---|---|
 | `public/index.html`, `style.css`, `app.js` | Oberfläche, Videoliste, Hochladen, Offline-Knopf, Update-Werkzeug |
 | `public/viewer.js` | 360°-Viewer mit three.js (Ziehen, Pinch-Zoom, Sensor, WebXR) |
+| `public/vr-settings.js` | Einstellungstafel in der Brille (Reiter, Regler, Schalter) |
 | `public/vr-menu.js` | Steuer-Menü im VR-Modus (Controller-Strahl, Hand-Pinch) |
 | `public/sw.js` | Service Worker: App-Cache pro Version, Video-Cache mit Range-Antworten |
 | `public/vendor/` | three.js (MIT), lokal mitgeliefert, damit alles offline geht |

@@ -238,8 +238,9 @@ export class Viewer {
     // Sobald die Bildgroesse bekannt ist: erste Vermutung (wird spaeter durch Dateiname,
     // Metadaten oder Bildanalyse ersetzt – siehe app.js)
     this._onMeta = () => {
-      this.u.uTexSize.value.set(video.videoWidth, video.videoHeight);
-      if (this.formatSource === 'Standard') this.setFormat(fromSize(video.videoWidth, video.videoHeight), 'Seitenverhältnis');
+      const v = this.video;
+      this.u.uTexSize.value.set(v.videoWidth, v.videoHeight);
+      if (this.formatSource === 'Standard') this.setFormat(fromSize(v.videoWidth, v.videoHeight), 'Seitenverhältnis');
       else this.setFormat(this.format, this.formatSource); // Leinwand braucht das Seitenverhaeltnis
     };
     video.addEventListener('loadedmetadata', this._onMeta);
@@ -339,13 +340,19 @@ export class Viewer {
 
   // Pipette: Farbe des Videos an einer Bildschirmstelle (Mittelwert 5×5 Pixel)
   pickColor(clientX, clientY) {
-    const v = this.video;
-    if (!v.videoWidth) return null;
+    if (!this.video.videoWidth) return null;
     const r = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
     const rc = new THREE.Raycaster();
     rc.setFromCamera(ndc, this.camera);
-    let dir = rc.ray.direction.clone().applyQuaternion(this.mesh.quaternion.clone().invert()).normalize();
+    return this.pickColorDir(rc.ray.direction);
+  }
+
+  // Farbe des Videos in einer Blickrichtung (Weltraum) – fuer die Pipette in der Brille
+  pickColorDir(worldDir) {
+    const v = this.video;
+    if (!v.videoWidth) return null;
+    let dir = worldDir.clone().applyQuaternion(this.mesh.quaternion.clone().invert()).normalize();
     const sz = this.pose.size;
     if (Math.abs(sz - 1) > 1e-4) {      // gleiche Groessen-Umrechnung wie im Shader
       const th = Math.acos(Math.max(-1, Math.min(1, -dir.z))) / sz;
@@ -542,6 +549,7 @@ export class Viewer {
       if (camAccess && frame) {
         const img = this._readCamAccess(frame, session);
         if (img) {
+          this._bandLast = { data: img.data, w: img.w, h: img.h, flipY: true };
           const r = findBand(img.data, img.w, img.h, color, b.sens, true, st.prev);
           if (r) { st.prev = r; found = this._dirFromView(img.view, r); }
         }
@@ -551,7 +559,9 @@ export class Viewer {
         if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
         const ctx = c.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(vid, 0, 0, w, h);
-        const r = findBand(ctx.getImageData(0, 0, w, h).data, w, h, color, b.sens, false, st.prev);
+        const data = ctx.getImageData(0, 0, w, h).data;
+        this._bandLast = { data, w, h, flipY: false };
+        const r = findBand(data, w, h, color, b.sens, false, st.prev);
         if (r) st.prev = r;
         if (r) {
           const toDir = (x, y) => new THREE.Vector3((x * 2 - 1) * tanX, -(y * 2 - 1) * tanY, -1).normalize().applyQuaternion(head);
@@ -634,6 +644,28 @@ export class Viewer {
       return { data: ca.buf, w: W, h: H, view };
     } catch { this.renderer.resetState(); return null; }
   }
+
+  // Anderes Video zeigen, ohne VR/Durchsicht zu verlassen
+  setVideo(video, title = '') {
+    this.video.removeEventListener('loadedmetadata', this._onMeta);
+    this.texture.dispose();
+    this.texture = new THREE.VideoTexture(video);
+    this.texture.colorSpace = THREE.SRGBColorSpace;
+    this.u.map.value = this.texture;
+    this.video = video;
+    this.vrMenu.video = video;
+    this.vrMenu.title = title;
+    this.formatSource = 'Standard';
+    this.setFormat(DEFAULT_FORMAT, 'Standard');
+    video.addEventListener('loadedmetadata', this._onMeta);
+    if (video.readyState >= 1) this._onMeta();
+  }
+
+  // Einstellungstafel in der Brille: pages() liefert die Seiten (siehe vr-settings.js)
+  setVRPages(pages) { this.vrMenu.settings.pages = pages; }
+
+  // letztes ausgewertetes Kamerabild fuers Band (zum Anlernen in der Brille)
+  bandFrame() { return this._bandLast || null; }
 
   vrButton() {
     const b = VRButton.createButton(this.renderer, { optionalFeatures: ['local-floor', 'hand-tracking'] });

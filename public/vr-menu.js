@@ -3,6 +3,7 @@
 // Abzug/Pinch ins Leere blendet das Menue ein bzw. aus.
 import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
+import { VRSettings, SET_H } from '/vr-settings.js';
 
 const W = 1024, H = 400;          // Canvas-Pixel
 const PANEL_W = 1.0;               // Meter in der Szene
@@ -48,7 +49,7 @@ export class VRMenu {
     this.lastDraw = 0;
     this._place = false;
 
-    const slot = (W - 48) / 8;
+    const slot = (W - 48) / 9;
     this.buttons = [
       { id: 'back', icon: 'fast_rewind', label: '−10 s' },
       { id: 'play', icon: 'pause', label: 'Pause', big: true },
@@ -57,8 +58,12 @@ export class VRMenu {
       { id: 'center', icon: 'center_focus_strong', label: 'Ausrichten' },
       { id: 'key', icon: 'layers', label: 'Grün weg' },
       { id: 'hands', icon: 'pan_tool', label: 'Hände' },
+      { id: 'settings', icon: 'tune', label: 'Optionen' },
       { id: 'exit', icon: 'close', label: 'Beenden' },
-    ].map((b, i) => ({ ...b, cx: 24 + slot * (i + 0.5), cy: ROW_Y, r: b.big ? 54 : 42 }));
+    ].map((b, i) => ({ ...b, cx: 24 + slot * (i + 0.5), cy: ROW_Y, r: b.big ? 50 : 40 }));
+    // Einstellungstafel ueber dem Bedienfeld (Format, Greenscreen, Position, Haende, Videos)
+    this.settings = new VRSettings(scene);
+    this._pickCb = null;
 
     // Tafel
     this.canvas = document.createElement('canvas');
@@ -135,6 +140,8 @@ export class VRMenu {
   hide() {
     this.visible = false;
     this.panel.visible = false;
+    this.settings.visible = false;
+    this._pickCb = null;
     this.drag = null;
     this.hover.clear();
   }
@@ -157,12 +164,17 @@ export class VRMenu {
     for (const c of this.controllers) {
       const { ray, dot, mode } = c.userData;
       const pointer = mode === 'tracked-pointer';
-      const hit = this.visible && mode ? this._hit(c) : null;
+      let hit = this.visible && mode ? this._hit(c) : null;
+      const sHit = this.settings.visible && mode ? this._hit(c, this.settings.mesh) : null;
+      if (sHit && (!hit || sHit.distance < hit.distance)) hit = null;
+      this.settings.setHover(c, sHit ? sHit.uv : null);
+      if (sHit) this.lastActivity = now;
       const hHit = !this.visible && mode ? this._hit(c, this.handle) : null;
       if (hHit) { hNew = hHit.uv.x < 0.5 ? 'open' : 'exit'; hCtrl = c; }
       ray.visible = pointer && (this.visible || !!hHit);
       dot.visible = !!hit;
-      if (hHit && !hit) { ray.scale.z = hHit.distance; dot.visible = true; dot.position.copy(hHit.point); dot.quaternion.copy(this.handle.quaternion); dot.translateZ(0.002); }
+      if (sHit && !hit) { ray.visible = pointer; ray.scale.z = sHit.distance; dot.visible = true; dot.position.copy(sHit.point); dot.quaternion.copy(this.settings.mesh.quaternion); dot.translateZ(0.002); }
+      else if (hHit && !hit) { ray.scale.z = hHit.distance; dot.visible = true; dot.position.copy(hHit.point); dot.quaternion.copy(this.handle.quaternion); dot.translateZ(0.002); }
       else if (hit) {
         ray.scale.z = hit.distance;
         dot.position.copy(hit.point);
@@ -185,7 +197,8 @@ export class VRMenu {
     }
 
     if (hNew !== this._hHover) { this._hHover = hNew; this._drawHandle(); if (hNew) this._pulse(hCtrl, 0.25, 15); }
-    if (this.visible && !this.video.paused && !this.drag && now - this.lastActivity > AUTO_HIDE_MS) this.hide();
+    if (this.visible && !this.settings.visible && !this.video.paused && !this.drag && now - this.lastActivity > AUTO_HIDE_MS) this.hide();
+    if (this.settings.visible && now - this.settings.lastDraw > 400) this.settings.draw();
     if (this.visible && (changed || now - this.lastDraw > 250)) this.draw();
   }
 
@@ -199,6 +212,11 @@ export class VRMenu {
     this.panel.position.copy(pos).addScaledVector(dir, 1.3);
     this.panel.position.y = pos.y - 0.32;
     this.panel.lookAt(pos);
+    // Einstellungen direkt darueber, leicht zum Kopf geneigt
+    const s = this.settings.mesh;
+    s.position.copy(this.panel.position);
+    s.position.y += PANEL_H / 2 + SET_H / 2 + 0.03;
+    s.lookAt(pos);
   }
 
   _hit(c, obj = this.panel) {
@@ -265,8 +283,20 @@ export class VRMenu {
       }
       this.show(); return;
     }
+    // Einstellungstafel
+    if (this.settings.visible) {
+      const sh = this._hit(c, this.settings.mesh);
+      if (sh && this.settings.press(c, sh.uv)) { this._pulse(c, 0.5, 25); this.lastActivity = performance.now(); return; }
+    }
     const hit = this._hit(c);
-    if (!hit) { this.toggle(); return; }  // ins Leere: Menue ein/aus
+    if (!hit) {
+      // Pipette: naechster Druck ins Video waehlt die Farbe an dieser Stelle
+      if (this._pickCb) {
+        const dir = new THREE.Vector3(0, 0, -1).applyMatrix4(this._m.identity().extractRotation(c.matrixWorld));
+        const cb = this._pickCb; this._pickCb = null; cb(dir); this.settings.draw(); return;
+      }
+      this.toggle(); return;  // ins Leere: Menue ein/aus
+    }
     this.lastActivity = performance.now();
     const id = this._targetAt(hit.uv);
     if (!id) return;
@@ -281,12 +311,18 @@ export class VRMenu {
       case 'center': this.onRecenter?.(); this._place = true; break;
       case 'key': this.chroma?.toggle(); break;
       case 'hands': this.hands?.toggle(); break;
+      case 'settings': this.settings.visible = !this.settings.visible; this._place = true; break;
       case 'exit': this.renderer.xr.getSession()?.end(); break;
     }
     this.draw();
   }
 
+  // Pipette scharf schalten: cb(weltRichtung) beim naechsten Druck ins Video
+  armPick(cb) { this._pickCb = cb; }
+  get picking() { return !!this._pickCb; }
+
   _release(c) {
+    this.settings.release(c);
     if (this.drag?.ctrl !== c) return;
     if (this.video.duration) this.video.currentTime = this.drag.frac * this.video.duration;
     this.drag = null;
@@ -347,13 +383,13 @@ export class VRMenu {
       let name = b.icon, label = b.label;
       if (b.id === 'play') { name = v.paused ? 'play_arrow' : 'pause'; label = v.paused ? 'Abspielen' : 'Pause'; }
       if (b.id === 'mute') { name = v.muted ? 'volume_off' : 'volume_up'; label = v.muted ? 'Ton an' : 'Ton aus'; }
-      const keyOn = (b.id === 'key' && this.chroma?.get()) || (b.id === 'hands' && this.hands?.get());
+      const keyOn = (b.id === 'key' && this.chroma?.get()) || (b.id === 'hands' && this.hands?.get()) || (b.id === 'settings' && this.settings.visible);
       if (b.id === 'hands') label = this.hands?.label?.() || label;
       const on = hovered.has(b.id);
       ctx.beginPath(); ctx.arc(b.cx, b.cy, on ? b.r + 4 : b.r, 0, Math.PI * 2);
       ctx.fillStyle = b.big ? C.accent : on ? C.hover : keyOn ? 'rgba(126,224,176,0.30)' : C.btn; ctx.fill();
       if (b.big && on) { ctx.lineWidth = 5; ctx.strokeStyle = C.text; ctx.stroke(); }
-      this._icon(name, b.cx, b.cy, b.big ? 60 : 44, b.big ? C.ink : C.text);
+      this._icon(name, b.cx, b.cy, b.big ? 56 : 40, b.big ? C.ink : C.text);
       ctx.font = '500 20px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = on ? C.text : C.muted;
@@ -376,6 +412,7 @@ export class VRMenu {
       dot.geometry.dispose(); dot.material.dispose();
       this.scene.remove(dot); this.scene.remove(c);
     }
+    this.settings.dispose(this.scene);
     this.scene.remove(this.panel); this.scene.remove(this.handle);
     this.handle.geometry.dispose(); this.handle.material.dispose(); this.htexture.dispose();
     this.panel.geometry.dispose(); this.panel.material.dispose();

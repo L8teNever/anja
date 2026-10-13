@@ -16,6 +16,7 @@ const SHELL = [
   `/app.js?v=${VERSION}`,
   '/viewer.js',
   '/vr-menu.js',
+  '/vr-settings.js',
   '/projection.js',
   '/band.js',
   '/room.js',

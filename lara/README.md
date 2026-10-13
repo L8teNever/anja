@@ -22,8 +22,10 @@ der etwas unter `lara/` ändert (`.github/workflows/lara.yml`).
 - **Kegel aufstellen:** „Kegel hier“ und auf den Boden zielen – dort steht der Kopfkegel, das
   Dreieck (10 Kegel, Originalabstand 30,5 cm) zeigt von dir weg. Beim ersten Start ist das
   Aufstellen schon aktiv.
-- **Werfen (Brille):** Kugel greifen – mit der Hand (Daumen + Zeigefinger zusammen) oder dem
-  Controller (Grifftaste oder Abzug, auch per Strahl aus der Ferne). Arm schwingen und loslassen:
+- **Werfen (Brille):** Die Kugel schwebt rechts vor dir auf Hüfthöhe und leuchtet, sobald du sie
+  greifen kannst. Greifen mit der Hand (Daumen + Zeigefinger zusammen, bis 20 cm neben der Kugel)
+  oder dem Controller (Grifftaste oder Abzug, auch per Strahl aus der Ferne). Greifen hat Vorrang
+  vor der Werkzeugleiste. Arm schwingen und loslassen:
   Richtung und Tempo kommen aus den letzten ~90 ms der Handbewegung. Nur loslassen ohne Schwung
   legt die Kugel zurück.
 - **Handy:** auf den Boden tippen zum Aufstellen, dann nach oben wischen – je schneller, desto

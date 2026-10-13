@@ -51,6 +51,9 @@ scene.add(hall);
 scene.background = new THREE.Color(0x15111d);
 
 const lane = new Lane(scene);
+// unsichtbare, groessere Kugel: leichter mit dem Strahl zu treffen
+const grabProxy = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), new THREE.MeshBasicMaterial({ visible: false }));
+lane.ball.add(grabProxy);
 // Mehrere Spieler mit einem Geraet: reihum, jeder spielt einen ganzen Frame
 const PLAYERS_KEY = 'lara-players';
 let names = ['Spieler 1'];
@@ -166,34 +169,43 @@ function floorHit(ray) {
 
 function viewerPos() { return new THREE.Vector3().setFromMatrixPosition(renderer.xr.isPresenting ? renderer.xr.getCamera().matrixWorld : camera.matrixWorld); }
 
+// Kann man die Kugel gerade greifen? (Hand/Controller nah dran oder Strahl zielt drauf)
+const GRAB_NEAR = 0.2;                      // Abstand von der Kugeloberflaeche (grosszuegig)
+function grabTarget(inp) {
+  if (!lane.ball.visible || lane.ballState === 'rolling' || lane.ballState === 'scored') return null;
+  const pt = point(inp);
+  if (pt && pt.pos.distanceTo(lane.ball.position) < BALL_R + GRAB_NEAR) return { near: true, pt };
+  setRay(inp);
+  if (raycaster.intersectObject(grabProxy)[0]) return { near: false, pt };
+  return null;
+}
+
 function press(inp, kind) {
   if (!inp.mode) return;
+  // 1) Kugel greifen hat Vorrang (sonst faengt die Werkzeugleiste den Griff ab)
+  const g = !placing && grabTarget(inp);
+  if (g) {
+    lane.grab();
+    held = { inp, offset: g.near ? lane.ball.position.clone().sub(g.pt.pos).clampLength(0, BALL_R * 0.6) : new THREE.Vector3(0, -0.02, 0) };
+    inp.hist = [];
+    pulse(inp, 0.6, 40);
+    note = ''; drawToolbar();
+    return;
+  }
   setRay(inp);
-  // Werkzeugleiste
+  // 2) Werkzeugleiste
   if (toolbar.visible) {
     const h = raycaster.intersectObject(toolbar)[0];
     if (h) { tool(TOOLS[Math.floor(h.uv.x * TOOLS.length)]?.id); return; }
   }
-  // Kegel aufstellen
-  if (placing && kind === 'select') {
+  // 3) Kegel aufstellen
+  if ((placing || !lane.placed) && kind === 'select') {
     const p = arHit || floorHit(raycaster.ray);
     if (p) placePins(p);
     return;
   }
-  // Kugel greifen: nah (Hand/Controller) oder per Strahl aus der Ferne
-  const pt = point(inp);
-  const near = pt && pt.pos.distanceTo(lane.ball.position) < BALL_R + (pt.hand ? 0.07 : 0.1);
-  const far = !near && lane.ballState !== 'rolling' && raycaster.intersectObject(lane.ball)[0];
-  if (lane.ball.visible && lane.ballState !== 'rolling' && (near || far)) {
-    lane.grab();
-    held = { inp, offset: near ? lane.ball.position.clone().sub(pt.pos) : new THREE.Vector3(0, 0, 0) };
-    if (!near) held.offset.set(0, -0.02, 0);
-    inp.hist = [];
-    pulse(inp, 0.6, 40);
-    return;
-  }
-  // nichts getroffen: beim allerersten Mal Kegel vor den Spieler stellen
-  if (!lane.placed && kind === 'select') { const p = floorHit(raycaster.ray); if (p) placePins(p); }
+  // 4) daneben gegriffen: Hinweis
+  if (lane.placed && lane.ballState === 'rest') { note = 'Hand an die Kugel (sie leuchtet) und Daumen + Zeigefinger zusammen'; drawToolbar(); }
 }
 
 function release() {
@@ -226,7 +238,7 @@ function ballHome() {
   if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
   fwd.normalize();
   const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-  return p.addScaledVector(fwd, 0.35).addScaledVector(right, 0.28).setY(lane.floorY + 0.95);
+  return p.addScaledVector(fwd, 0.4).addScaledVector(right, 0.3).setY(Math.max(lane.floorY + 0.8, p.y - 0.65));   // rechts vor dir, etwa Hüfthöhe
 }
 
 function placePins(p) {
@@ -367,6 +379,16 @@ renderer.setAnimationLoop((t, frame) => {
     if (hover !== toolHover) { toolHover = hover; drawToolbar(); }
     placeToolbar();
   }
+  // wartende Kugel bleibt in Reichweite, auch wenn man herumlaeuft
+  if (xr && lane.ballState === 'rest' && lane.placed) {
+    const want = ballHome();
+    if (want.distanceTo(lane.ballHome) > 0.5) lane.ballHome.lerp(want, Math.min(1, dt * 2));
+  }
+  // Kugel leuchtet, wenn man sie greifen kann
+  if (xr && !held) {
+    const can = inputs.some((inp) => inp.mode && grabTarget(inp));
+    lane.ball.material.emissive.setHex(can ? 0x552244 : 0x000000);
+  } else lane.ball.material.emissive.setHex(held ? 0x331122 : 0x000000);
   lane.step(dt);
   if (lane.rollDone()) { lane.ballState = 'scored'; scoreRoll(); }
   renderer.render(scene, camera);

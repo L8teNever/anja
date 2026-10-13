@@ -788,6 +788,14 @@ async function openPlayer(src, title, item = null) {
   viewer.onHands = (on) => { if (on !== (handCfg.mode === 'xr')) { handCfg.mode = on ? 'xr' : 'off'; saveHandCfg(); if (handCfg.mode !== 'band') stopBand(); syncHandUI(); } };
   viewer.renderer.xr.addEventListener('sessionstart', () => { viewer?.setHole(null); $('band-mark').hidden = true; syncHandUI(); });
   viewer.onBandStatus = (t) => { if (handCfg.mode === 'band') $('hp-status').textContent = t; };
+  // Im VR-Menue schaltet "Hände" durch: Aus -> Hand-Tracking -> Band -> Aus
+  viewer.handsLabel = () => ({ off: 'Hände', xr: 'Hände: Tracking', band: 'Hände: Band' })[handCfg.mode];
+  viewer.onHandsCycle = () => {
+    handCfg.mode = { off: 'xr', xr: 'band', band: 'off' }[handCfg.mode] || 'off';
+    saveHandCfg(); applyHandMode();
+  };
+  // Kamera wird gebraucht (z. B. Band in VR eingeschaltet): starten und dem Viewer geben
+  viewer.onNeedCamera = async () => { if (handCfg.mode === 'band' && !camStream) { await startBand(); syncHandUI(); } };
   viewer.renderer.xr.addEventListener('sessionend', syncHandUI);
   applyHandMode();
   detectFormat(src, item);

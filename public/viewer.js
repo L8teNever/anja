@@ -249,7 +249,8 @@ export class Viewer {
       renderer: this.renderer, scene: this.scene, video, title,
       onRecenter: () => this._recenterXR(),
       chroma: { get: () => this.chromaState().on, toggle: () => this.setChroma({ on: !this.chromaState().on }) },
-      hands: { get: () => this.handsOn, toggle: () => this.setHands(!this.handsOn) },
+      hands: { get: () => this.handsOn || !!this.band?.on, label: () => this.handsLabel?.() || 'Hände',
+        toggle: () => (this.onHandsCycle ? this.onHandsCycle() : this.setHands(!this.handsOn)) },
     });
     this.setPose(POSE_DEFAULT, true);
     this._initHands();
@@ -558,7 +559,9 @@ export class Viewer {
           found = { dir: d, ang: d.angleTo(e) };
         }
       } else {
-        this._bandStatus(ar ? 'Kein Kamerabild – Durchsicht neu starten' : 'Kein Kamerabild – vor VR „Rotes Band“ wählen');
+        // Kamera fehlt: einmal selbst anfragen (geht auch mitten in VR, z. B. Quest-Kameras)
+        if (!st.asked) { st.asked = true; this.onNeedCamera?.(); }
+        this._bandStatus('Warte auf Kamerabild …');
         u.uBand.value = 0;
         return;
       }

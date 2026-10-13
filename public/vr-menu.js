@@ -348,6 +348,7 @@ export class VRMenu {
       if (b.id === 'play') { name = v.paused ? 'play_arrow' : 'pause'; label = v.paused ? 'Abspielen' : 'Pause'; }
       if (b.id === 'mute') { name = v.muted ? 'volume_off' : 'volume_up'; label = v.muted ? 'Ton an' : 'Ton aus'; }
       const keyOn = (b.id === 'key' && this.chroma?.get()) || (b.id === 'hands' && this.hands?.get());
+      if (b.id === 'hands') label = this.hands?.label?.() || label;
       const on = hovered.has(b.id);
       ctx.beginPath(); ctx.arc(b.cx, b.cy, on ? b.r + 4 : b.r, 0, Math.PI * 2);
       ctx.fillStyle = b.big ? C.accent : on ? C.hover : keyOn ? 'rgba(126,224,176,0.30)' : C.btn; ctx.fill();

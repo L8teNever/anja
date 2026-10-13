@@ -121,7 +121,10 @@ Im Player unten die Hand:
     (WebXR „camera-access“), das Video wird in Richtung des Bands ausgeschnitten.
   - **VR:** vorher „Rotes Band“ wählen (Kamera läuft dann), in VR erscheint an der Stelle
     ein Fenster mit dem Kamerabild deiner Hand. „Kamera-Winkel“ zum Feinjustieren.
-  - Gibt eine Brille dem Browser kein Kamerabild, steht das unten im VR-Menü.
+  - **Quest:** neuere Quest-Browser geben die Brillenkameras als normale Kameras frei;
+    die App nutzt sie live für das Band (Durchsicht: ausschneiden, VR: Kamerafenster).
+  - Im VR-Menü schaltet „Hände“ durch: Aus → Tracking → Band. Die Kamera startet bei
+    Bedarf auch mitten in VR. Der Status steht unten im VR-Menü.
 
 ## Raus aus VR / Durchsicht
 

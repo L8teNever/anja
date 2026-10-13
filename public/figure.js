@@ -1,183 +1,245 @@
-// Weibliche Gliederpuppe (Zeichenpuppen-Stil, aus einfachen Formen gebaut) mit Gelenken.
-// - ganze Figur: am Becken/Rumpf greifen -> verschieben/drehen (macht room.js)
-// - Hand/Fuss ziehen: Arm/Bein folgt (Zwei-Knochen-IK, Ellbogen/Knie knicken natuerlich)
-// - Ellbogen/Knie ziehen: Knickrichtung aendern (Oberarm/Oberschenkel zeigt dorthin)
-// - Kopf ziehen: Kopf dreht sich hin; Brust ziehen: Oberkoerper beugt sich
-// Vorne = +Z, oben = +Y. Gliedmassen zeigen in ihrer Grundstellung nach unten (-Y).
+// Bewegliche Figur mit echtem 3D-Modell (models/michelle.glb, Mixamo-Skelett, three.js-Beispielmodell).
+// Bewegen:
+//  - Becken/Bauch greifen: ganze Figur verschieben/drehen (macht room.js)
+//  - jedes Koerperteil greifen: Oberarm dreht die Schulter, Unterarm den Ellbogen, Oberschenkel
+//    die Huefte, Unterschenkel das Knie, Brust beugt den Oberkoerper, Kopf dreht den Kopf
+//  - Griffpunkte an Haenden/Fuessen: ganzer Arm/Bein folgt (Zwei-Knochen-IK)
+//  - Griffpunkte an Ellbogen/Knien: Knickrichtung
+// Posen werden als Richtungen je Knochen beschrieben (funktioniert unabhaengig vom Skelett).
+// Vorne = +Z, oben = +Y, links (der Figur) = +X.
 import * as THREE from 'three';
+import { GLTFLoader } from '/vendor/GLTFLoader.js';
+import * as SkeletonUtils from '/vendor/SkeletonUtils.js';
 
-const SKIN = 0xd9b89c, JOINT = 0xb69cff;
-const DOWN = new THREE.Vector3(0, -1, 0), UP = new THREE.Vector3(0, 1, 0);
+const MODEL = '/models/michelle.glb';
+const B = (n) => `mixamorig${n}`;
 
-// Posen: lokale Drehungen in Grad [x, y, z] je Gelenk (fehlende = 0); root.y = Beckenhoehe-Anpassung
+// Logische Gelenke -> Knochen; dir = Knochen, dessen Lage die Richtung bestimmt (Kind)
+const RIG = {
+  root: ['Hips', 'Spine'], spine: ['Spine', 'Spine2'], chest: ['Spine2', 'Neck'], neck: ['Neck', 'Head'], head: ['Head', 'HeadTop_End'],
+  lShoulder: ['LeftArm', 'LeftForeArm'], lElbow: ['LeftForeArm', 'LeftHand'], lWrist: ['LeftHand', 'LeftHandMiddle1'],
+  rShoulder: ['RightArm', 'RightForeArm'], rElbow: ['RightForeArm', 'RightHand'], rWrist: ['RightHand', 'RightHandMiddle1'],
+  lHip: ['LeftUpLeg', 'LeftLeg'], lKnee: ['LeftLeg', 'LeftFoot'], lAnkle: ['LeftFoot', 'LeftToeBase'],
+  rHip: ['RightUpLeg', 'RightLeg'], rKnee: ['RightLeg', 'RightFoot'], rAnkle: ['RightFoot', 'RightToeBase'],
+};
+// Greifbare Koerperabschnitte: Gelenk, Radius; 'body' = ganze Figur
+const SEGS = [
+  ['root', 0.17, 'body'], ['spine', 0.16, 'body'], ['chest', 0.15], ['neck', 0.07], ['head', 0.13],
+  ['lShoulder', 0.07], ['lElbow', 0.06], ['lWrist', 0.06], ['rShoulder', 0.07], ['rElbow', 0.06], ['rWrist', 0.06],
+  ['lHip', 0.1], ['lKnee', 0.08], ['lAnkle', 0.07], ['rHip', 0.1], ['rKnee', 0.08], ['rAnkle', 0.07],
+];
+
+// Posen: Richtung je Gelenk (Figurraum), root = zusaetzliche Drehung des Beckens in Grad [x, y, z]
+const D = (x, y, z) => new THREE.Vector3(x, y, z).normalize();
+const ARMS_DOWN = { lShoulder: D(0.18, -1, 0.04), lElbow: D(0.1, -1, 0.15), rShoulder: D(-0.18, -1, 0.04), rElbow: D(-0.1, -1, 0.15) };
+const LEGS_STRAIGHT = { lHip: D(0.04, -1, 0), lKnee: D(0.02, -1, 0), rHip: D(-0.04, -1, 0), rKnee: D(-0.02, -1, 0) };
 export const POSES = {
-  Stehen: { lShoulder: [0, 0, 8], rShoulder: [0, 0, -8] },
-  'Arme hoch': { lShoulder: [0, 0, 165], rShoulder: [0, 0, -165], lElbow: [0, 0, 10], rElbow: [0, 0, -10] },
-  Sitzen: { lHip: [-90, 0, 4], rHip: [-90, 0, -4], lKnee: [90, 0, 0], rKnee: [90, 0, 0], lShoulder: [-20, 0, 8], rShoulder: [-20, 0, -8], lElbow: [-50, 0, 0], rElbow: [-50, 0, 0] },
-  Knien: { lKnee: [90, 0, 0], rKnee: [90, 0, 0], lShoulder: [0, 0, 8], rShoulder: [0, 0, -8] },
-  Hocke: { lHip: [-120, 0, 10], rHip: [-120, 0, -10], lKnee: [140, 0, 0], rKnee: [140, 0, 0], spine: [25, 0, 0], lShoulder: [-60, 0, 10], rShoulder: [-60, 0, -10] },
-  Liegen: { root: [-90, 0, 0], lShoulder: [0, 0, 20], rShoulder: [0, 0, -20] },
+  Stehen: { ...ARMS_DOWN, ...LEGS_STRAIGHT },
+  'Arme hoch': { ...LEGS_STRAIGHT, lShoulder: D(0.3, 1, 0), lElbow: D(0.15, 1, 0.05), rShoulder: D(-0.3, 1, 0), rElbow: D(-0.15, 1, 0.05) },
+  'T-Pose': { ...LEGS_STRAIGHT, lShoulder: D(1, 0, 0), lElbow: D(1, 0, 0), rShoulder: D(-1, 0, 0), rElbow: D(-1, 0, 0) },
+  Sitzen: { lHip: D(0.08, 0, 1), lKnee: D(0.05, 0, 1), rHip: D(-0.08, 0, 1), rKnee: D(-0.05, 0, 1),
+    lShoulder: D(0.25, -1, -0.35), lElbow: D(0.15, -1, -0.3), rShoulder: D(-0.25, -1, -0.35), rElbow: D(-0.15, -1, -0.3) },
+  Knien: { lHip: D(0.05, -1, 0.05), lKnee: D(0, -0.05, -1), rHip: D(-0.05, -1, 0.05), rKnee: D(0, -0.05, -1), ...ARMS_DOWN },
+  Hocke: { lHip: D(0.3, -0.1, 1), lKnee: D(0.05, -1, -0.3), rHip: D(-0.3, -0.1, 1), rKnee: D(-0.05, -1, -0.3),
+    chest: D(0, 1, 0.35), lShoulder: D(0.15, -0.25, 1), lElbow: D(0.1, -0.2, 1), rShoulder: D(-0.15, -0.25, 1), rElbow: D(-0.1, -0.2, 1) },
+  Liegen: { ...LEGS_STRAIGHT, lShoulder: D(0.4, -1, 0), lElbow: D(0.3, -1, 0), rShoulder: D(-0.4, -1, 0), rElbow: D(-0.3, -1, 0), root: [-90, 0, 0] },
 };
 export const POSE_NAMES = Object.keys(POSES);
+const POSE_ORDER = ['spine', 'chest', 'neck', 'lShoulder', 'lElbow', 'rShoulder', 'rElbow', 'lHip', 'lKnee', 'rHip', 'rKnee'];
+
+let gltfP = null;
+export function loadFigureModel() {
+  if (!gltfP) gltfP = new GLTFLoader().loadAsync(MODEL);
+  return gltfP;
+}
 
 export class Figure extends THREE.Group {
-  constructor() {
+  // erst loadFigureModel() abwarten, dann new Figure(gltf)
+  constructor(gltf) {
     super();
     this.isFigure = true;
-    this.mat = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.6, metalness: 0.02 });
-    this.hmat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.4, emissive: 0x000000, transparent: true, opacity: 0.85 });
-    this.parts = [];      // Koerperteile (Greifen der ganzen Figur)
-    this.handles = [];    // Gelenk-Griffe
-    this.j = {};          // Gelenke nach Name
-
-    const J = (name, parent, x, y, z) => { const o = new THREE.Object3D(); o.name = name; o.position.set(x, y, z); parent.add(o); this.j[name] = o; return o; };
-    const blob = (parent, sx, sy, sz, x = 0, y = 0, z = 0) => {
-      const m = new THREE.Mesh(this._sphere(), this.mat); m.scale.set(sx / 2, sy / 2, sz / 2); m.position.set(x, y, z);
-      parent.add(m); this.parts.push(m); return m;
-    };
-    const limb = (parent, r, len, dir = -1) => {
-      const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.001, len - 2 * r), 6, 12), this.mat);
-      m.position.y = (dir * len) / 2; parent.add(m); this.parts.push(m); return m;
-    };
-
-    // Rumpf (Becken = Wurzel)
-    const root = J('root', this, 0, 0.93, 0);
-    blob(root, 0.34, 0.2, 0.22, 0, -0.02, 0);                       // Becken/Huefte
-    const spine = J('spine', root, 0, 0.07, 0);
-    blob(spine, 0.25, 0.2, 0.17, 0, 0.08, 0);                        // Taille
-    const chest = J('chest', spine, 0, 0.2, 0);
-    blob(chest, 0.31, 0.24, 0.19, 0, 0.08, 0);                       // Brustkorb
-    blob(chest, 0.12, 0.11, 0.1, 0.068, 0.04, 0.08);                 // Brust
-    blob(chest, 0.12, 0.11, 0.1, -0.068, 0.04, 0.08);
-    const neck = J('neck', chest, 0, 0.2, 0);
-    limb(neck, 0.038, 0.11, 1);
-    const head = J('head', neck, 0, 0.1, 0);
-    blob(head, 0.155, 0.21, 0.185, 0, 0.1, 0.01);                    // Kopf
-    blob(head, 0.165, 0.09, 0.19, 0, 0.17, -0.015);                  // Haaransatz/Hinterkopf
-
-    // Arme (links = +X)
-    for (const [s, x] of [['l', 1], ['r', -1]]) {
-      const sh = J(`${s}Shoulder`, chest, 0.17 * x, 0.15, 0);
-      blob(sh, 0.09, 0.09, 0.09);
-      limb(sh, 0.043, 0.27);
-      const el = J(`${s}Elbow`, sh, 0, -0.27, 0);
-      limb(el, 0.037, 0.24);
-      const wr = J(`${s}Wrist`, el, 0, -0.24, 0);
-      blob(wr, 0.065, 0.16, 0.035, 0, -0.08, 0.005);                 // Hand
-      // Beine
-      const hip = J(`${s}Hip`, root, 0.09 * x, -0.06, 0);
-      limb(hip, 0.072, 0.43);
-      const kn = J(`${s}Knee`, hip, 0, -0.43, 0);
-      limb(kn, 0.05, 0.42);
-      const an = J(`${s}Ankle`, kn, 0, -0.42, 0);
-      blob(an, 0.08, 0.06, 0.22, 0, -0.03, 0.06);                    // Fuss
+    this.model = SkeletonUtils.clone(gltf.scene);
+    this.add(this.model);
+    this.parts = [];                       // fuer Strahl-Treffer
+    this.model.traverse((o) => {
+      if (o.isMesh) {
+        o.frustumCulled = false;
+        o.material = o.material.clone();   // eigenes Material (Hervorheben)
+        o.material.emissive = o.material.emissive || new THREE.Color(0);
+        this.parts.push(o);
+        this.mat = o.material;
+      }
+    });
+    this.j = {}; this.c = {};
+    for (const [k, [a, b]] of Object.entries(RIG)) {
+      this.j[k] = this.model.getObjectByName(B(a));
+      this.c[k] = this.model.getObjectByName(B(b));
     }
+    this.rest = {};
+    for (const [k, o] of Object.entries(this.j)) this.rest[k] = o.quaternion.clone();
+    this.restRootPos = this.j.root.position.clone();
 
-    // Griffe an den Gelenken
-    const grip = (name, onJoint, kind, pos = [0, 0, 0]) => {
-      const h = new THREE.Mesh(this._sphere(), this.hmat); h.scale.setScalar(0.022);
-      h.position.set(...pos); this.j[onJoint].add(h);
-      h.userData = { handle: name, kind }; this.handles.push(h); return h;
+    // Griffpunkte (lila), groesser als vorher
+    this.hmat = new THREE.MeshStandardMaterial({ color: 0xb69cff, roughness: 0.4, transparent: true, opacity: 0.9, depthTest: false });
+    this.handleGroup = new THREE.Group(); this.add(this.handleGroup);
+    this.handles = [];
+    const grip = (name, kind) => {
+      const h = new THREE.Mesh(Figure.ball || (Figure.ball = new THREE.SphereGeometry(1, 18, 12)), this.hmat);
+      h.renderOrder = 5; h.scale.setScalar(0.028); h.userData = { handle: name, kind };
+      this.handleGroup.add(h); this.handles.push(h);
     };
-    grip('head', 'head', 'look', [0, 0.1, 0.11]);
-    grip('chest', 'chest', 'bend', [0, 0.08, 0.12]);
-    for (const s of ['l', 'r']) {
-      grip(`${s}Hand`, `${s}Wrist`, 'ikArm', [0, -0.09, 0]);
-      grip(`${s}Elbow`, `${s}Elbow`, 'aimUpper', [0, 0, -0.045]);
-      grip(`${s}Foot`, `${s}Ankle`, 'ikLeg', [0, -0.03, 0.06]);
-      grip(`${s}Knee`, `${s}Knee`, 'aimThigh', [0, 0, 0.06]);
-    }
+    for (const s of ['l', 'r']) { grip(`${s}Hand`, 'ikArm'); grip(`${s}Elbow`, 'elbow'); grip(`${s}Foot`, 'ikLeg'); grip(`${s}Knee`, 'knee'); }
+    grip('head', 'head'); grip('chest', 'chest');
     this.setPose('Stehen');
   }
 
-  _sphere() { return Figure._sph || (Figure._sph = new THREE.SphereGeometry(1, 20, 14)); }
+  /* ---------- Grundlagen ---------- */
+  _wp(o) { return o.getWorldPosition(new THREE.Vector3()); }
+  _fq() { return this.getWorldQuaternion(new THREE.Quaternion()); }
 
-  /* ---------- Posen ---------- */
-  setPose(name) {
-    const p = POSES[name] || {};
-    for (const [k, o] of Object.entries(this.j)) {
-      const r = p[k] || [0, 0, 0];
-      o.quaternion.setFromEuler(new THREE.Euler(...r.map(THREE.MathUtils.degToRad), 'XYZ'));
-    }
-    this.poseName = name;
-    this.updateMatrixWorld(true);
-  }
-
-  getJoints() { const o = {}; for (const [k, j] of Object.entries(this.j)) o[k] = j.quaternion.toArray(); return o; }
-  setJoints(o) { for (const [k, q] of Object.entries(o || {})) this.j[k]?.quaternion.fromArray(q); this.updateMatrixWorld(true); }
-
-  /* ---------- Gelenke ziehen ---------- */
-  // Knochen eines Gelenks (lokale Achse axis) in Weltrichtung zum Ziel drehen, Verdrehung bleibt
-  _aim(joint, target, axis = DOWN) {
-    const jp = joint.getWorldPosition(new THREE.Vector3());
-    const w = target.clone().sub(jp);
-    if (w.lengthSq() < 1e-8) return;
-    w.normalize();
+  // Gelenk so drehen, dass ein Punkt (Welt) zur Zielrichtung zeigt; Verdrehung bleibt erhalten
+  aimPoint(joint, point, target) {
+    const jp = this._wp(joint);
+    const d0 = point.clone().sub(jp), d1 = target.clone().sub(jp);
+    if (d0.lengthSq() < 1e-8 || d1.lengthSq() < 1e-8) return;
     const q0 = joint.getWorldQuaternion(new THREE.Quaternion());
-    const d0 = axis.clone().applyQuaternion(q0);
-    const qw = new THREE.Quaternion().setFromUnitVectors(d0, w).multiply(q0);
+    const qw = new THREE.Quaternion().setFromUnitVectors(d0.normalize(), d1.normalize()).multiply(q0);
     const pq = joint.parent.getWorldQuaternion(new THREE.Quaternion()).invert();
     joint.quaternion.copy(pq.multiply(qw));
     joint.updateMatrixWorld(true);
   }
 
-  // Zwei-Knochen-IK: a (Schulter/Huefte) -> b (Ellbogen/Knie) -> Ziel; Knick zur Pol-Seite
-  _ik2(ja, jb, jc, target, pole) {
-    const a = ja.getWorldPosition(new THREE.Vector3());
-    const b = jb.getWorldPosition(new THREE.Vector3());
-    const c = jc.getWorldPosition(new THREE.Vector3());
-    const l1 = a.distanceTo(b), l2 = b.distanceTo(c);
-    const t = target.clone();
-    let d = t.distanceTo(a);
-    const maxD = (l1 + l2) * 0.999, minD = Math.abs(l1 - l2) + 1e-3;
-    const dir = t.clone().sub(a).normalize();
-    d = Math.min(maxD, Math.max(minD, d));
-    t.copy(a).addScaledVector(dir, d);
-    const cosA = Math.min(1, Math.max(-1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d)));
-    const angA = Math.acos(cosA);
-    // Knickebene aus Ziel-Richtung und Pol
-    let n = dir.clone().cross(pole.clone().sub(a));
-    if (n.lengthSq() < 1e-8) n = dir.clone().cross(new THREE.Vector3(1, 0, 0));
-    n.normalize();
-    const toElbow = dir.clone().applyAxisAngle(n, angA);
-    const elbow = a.clone().addScaledVector(toElbow, l1);
-    this._aim(ja, elbow);
-    this._aim(jb, t);
+  // Knochen eines logischen Gelenks in eine Richtung (Figurraum) zeigen lassen
+  aimDir(name, dirLocal) {
+    const j = this.j[name], c = this.c[name];
+    const jp = this._wp(j);
+    this.aimPoint(j, this._wp(c), jp.clone().add(dirLocal.clone().applyQuaternion(this._fq())));
   }
 
-  // Griff zu einer Weltposition ziehen
-  drag(handle, target) {
-    const { handle: name, kind } = handle.userData;
-    const s = name[0];
+  /* ---------- Posen ---------- */
+  setPose(name) {
+    const p = POSES[name] || POSES.Stehen;
+    for (const [k, q] of Object.entries(this.rest)) this.j[k].quaternion.copy(q);
+    this.j.root.position.copy(this.restRootPos);
+    this.updateMatrixWorld(true);
+    for (const k of POSE_ORDER) if (p[k]) this.aimDir(k, p[k]);
+    if (p.root) {
+      const r = p.root.map(THREE.MathUtils.degToRad);
+      const qf = this._fq();
+      const qWorldRot = qf.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(...r))).multiply(qf.clone().invert());
+      const jq = this.j.root.getWorldQuaternion(new THREE.Quaternion());
+      const pq = this.j.root.parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+      this.j.root.quaternion.copy(pq.multiply(qWorldRot.multiply(jq)));
+    }
+    this.poseName = name;
+    this.updateMatrixWorld(true);
+    this.update();
+  }
+
+  getJoints() { const o = {}; for (const [k, j] of Object.entries(this.j)) o[k] = j.quaternion.toArray(); return o; }
+  setJoints(o) {
+    for (const [k, q] of Object.entries(o || {})) if (this.j[k] && q.length === 4) this.j[k].quaternion.fromArray(q);
+    this.updateMatrixWorld(true); this.update();
+  }
+
+  /* ---------- Ziehen ---------- */
+  _ik2(a, b, c, target, pole) {
+    const ja = this.j[a], jb = this.j[b], jc = this.j[c];
+    const pa = this._wp(ja), pb = this._wp(jb), pc = this._wp(jc);
+    const l1 = pa.distanceTo(pb), l2 = pb.distanceTo(pc);
+    const dir = target.clone().sub(pa).normalize();
+    const d = Math.min((l1 + l2) * 0.999, Math.max(Math.abs(l1 - l2) + 1e-3, target.distanceTo(pa)));
+    const t = pa.clone().addScaledVector(dir, d);
+    const angA = Math.acos(Math.min(1, Math.max(-1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
+    let n = dir.clone().cross(pole.clone().sub(pa));
+    if (n.lengthSq() < 1e-8) n = dir.clone().cross(new THREE.Vector3(1, 0, 0));
+    n.normalize();
+    const elbow = pa.clone().addScaledVector(dir.clone().applyAxisAngle(n, angA), l1);
+    this.aimPoint(ja, pb, elbow);
+    this.aimPoint(jb, this._wp(jc), t);
+  }
+
+  _handlePos(h) {
+    const { handle: n } = h.userData, s = n[0];
+    const mid = (a, b, k = 0.5) => this._wp(a).lerp(this._wp(b), k);
+    if (n.endsWith('Hand')) return mid(this.j[`${s}Wrist`], this.c[`${s}Wrist`], 0.6);
+    if (n.endsWith('Foot')) return mid(this.j[`${s}Ankle`], this.c[`${s}Ankle`], 0.5);
+    if (n.endsWith('Elbow')) return this._wp(this.j[`${s}Elbow`]);
+    if (n.endsWith('Knee')) return this._wp(this.j[`${s}Knee`]);
+    if (n === 'head') return mid(this.j.head, this.c.head, 0.55).add(new THREE.Vector3(0, 0, 0.1).applyQuaternion(this.j.head.getWorldQuaternion(new THREE.Quaternion())));
+    return mid(this.j.chest, this.c.chest, 0.4).add(new THREE.Vector3(0, 0, 0.13).applyQuaternion(this._fq()));
+  }
+
+  // Griffpunkt zu einer Weltposition ziehen
+  drag(h, target) {
+    const { handle: n, kind } = h.userData, s = n[0];
+    const fq = this._fq();
     if (kind === 'ikArm' || kind === 'ikLeg') {
       const arm = kind === 'ikArm';
       const [a, b, c] = arm ? [`${s}Shoulder`, `${s}Elbow`, `${s}Wrist`] : [`${s}Hip`, `${s}Knee`, `${s}Ankle`];
-      const back = new THREE.Vector3(0, 0, arm ? -0.15 : 0.15).applyQuaternion(this.getWorldQuaternion(new THREE.Quaternion()));
-      // Der Griff sitzt auf Hand/Fuss, nicht im Gelenk: Versatz mitrechnen (3 Durchlaeufe genuegen)
-      for (let k = 0; k < 3; k++) {
-        const off = handle.getWorldPosition(new THREE.Vector3()).sub(this.j[c].getWorldPosition(new THREE.Vector3()));
-        const pole = this.j[b].getWorldPosition(new THREE.Vector3()).add(back);
-        this._ik2(this.j[a], this.j[b], this.j[c], target.clone().sub(off), pole);
+      const bend = new THREE.Vector3(0, 0, arm ? -0.2 : 0.2).applyQuaternion(fq);
+      for (let k = 0; k < 3; k++) {     // Griff sitzt auf Hand/Fuss, nicht im Gelenk: Versatz mitrechnen
+        const off = this._handlePos(h).sub(this._wp(this.j[c]));
+        this._ik2(a, b, c, target.clone().sub(off), this._wp(this.j[b]).add(bend));
       }
-    } else if (kind === 'aimUpper') this._aim(this.j[`${s}Shoulder`], target);
-    else if (kind === 'aimThigh') this._aim(this.j[`${s}Hip`], target);
-    else if (kind === 'look') this._aim(this.j.neck, target, UP);
-    else if (kind === 'bend') this._aim(this.j.spine, target, UP);
+    } else if (kind === 'elbow') this.aimPoint(this.j[`${s}Shoulder`], this._wp(this.j[`${s}Elbow`]), target);
+    else if (kind === 'knee') this.aimPoint(this.j[`${s}Hip`], this._wp(this.j[`${s}Knee`]), target);
+    else if (kind === 'head') this.aimPoint(this.j.neck, this._handlePos(h), target);
+    else if (kind === 'chest') this.aimPoint(this.j.spine, this._handlePos(h), target);
+    this.update();
   }
 
-  // Figur auf den Boden stellen (tiefster Punkt auf floorY)
-  ground(floorY = 0) {
+  /* ---------- Koerperteil greifen ---------- */
+  // naechster Koerperabschnitt zu einem Weltpunkt: { name, body, dist }
+  nearestSeg(p) {
+    let best = null;
+    const ab = new THREE.Line3(), q = new THREE.Vector3();
+    for (const [name, r, kind] of SEGS) {
+      ab.set(this._wp(this.j[name]), this._wp(this.c[name]));
+      ab.closestPointToPoint(p, true, q);
+      const d = q.distanceTo(p) - r;
+      if (!best || d < best.dist) best = { name, body: kind === 'body', dist: d };
+    }
+    return best;
+  }
+
+  // Abschnitt greifen: der gegriffene Punkt bleibt am Knochen haengen
+  grabSeg(name, worldPoint) {
+    const j = this.j[name];
+    return { name, local: j.worldToLocal(worldPoint.clone()) };
+  }
+
+  dragSeg(g, target) {
+    const j = this.j[g.name];
+    const name = g.name === 'head' ? 'neck' : g.name === 'chest' ? 'spine' : g.name;   // Kopf/Brust drehen ueber Hals/Wirbelsaeule
+    const joint = this.j[name];
+    const p = j.localToWorld(g.local.clone());
+    this.aimPoint(joint, p, target);
+    this.update();
+  }
+
+  /* ---------- Boden, Anzeige ---------- */
+  // Abstand Unterkante -> Figur-Ursprung (genau, mit Haut), fuer Schwerkraft und Boden
+  measureBottom() {
     this.updateMatrixWorld(true);
     const box = new THREE.Box3();
-    for (const p of this.parts) box.expandByObject(p);
-    this.position.y += floorY - box.min.y;
-    this.updateMatrixWorld(true);
+    for (const m of this.parts) {
+      m.computeBoundingBox();
+      box.union(m.boundingBox.clone().applyMatrix4(m.matrixWorld));
+    }
+    this.bottom = box.min.y - this.position.y;
+    return this.bottom;
   }
 
-  highlight(handle) { for (const h of this.handles) h.scale.setScalar(h === handle ? 0.032 : 0.022); }
+  ground(floorY = 0) { this.measureBottom(); this.position.y = floorY - this.bottom; this.updateMatrixWorld(true); this.update(); }
+
+  update() {
+    this.updateMatrixWorld(true);
+    for (const h of this.handles) h.position.copy(this.handleGroup.worldToLocal(this._handlePos(h)));
+  }
 
   dispose() {
-    this.traverse((o) => { if (o.geometry && o.geometry !== Figure._sph) o.geometry.dispose(); });
-    this.mat.dispose(); this.hmat.dispose();
+    this.parts.forEach((m) => m.material.dispose());
+    this.hmat.dispose();
   }
 }

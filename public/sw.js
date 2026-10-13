@@ -24,6 +24,10 @@ const SHELL = [
   '/icons.js',
   '/vendor/three.module.min.js',
   '/vendor/VRButton.js',
+  '/vendor/GLTFLoader.js',
+  '/vendor/BufferGeometryUtils.js',
+  '/vendor/SkeletonUtils.js',
+  '/models/michelle.glb',
   '/manifest.webmanifest',
   '/icon.svg',
 ];

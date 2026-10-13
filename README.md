@@ -141,12 +141,15 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
   Würfel legen sich flach hin; mit dem Controller auf den Boden zielen setzt einen Würfel
   genau dorthin. Die Quest kennt die Bodenhöhe aus ihrer Begrenzung – kein Scan nötig.
   Wände und Möbel werden bewusst nicht erkannt.
-- **Figur:** „Figur +“ stellt eine weibliche Gliederpuppe (Zeichenpuppen-Stil) zu dir
-  gedreht auf den Boden. Am Körper greifen = ganze Figur verschieben/drehen (bleibt
-  aufrecht, steht immer auf dem Boden). Die lila Punkte sind Gelenke: Hand/Fuß ziehen –
-  Arm/Bein folgt (Ellbogen/Knie knicken natürlich), Ellbogen/Knie ziehen – Knickrichtung,
-  Kopf ziehen – Kopf dreht, Brust ziehen – Oberkörper beugt. „Pose ▸“ schaltet durch
-  Stehen, Arme hoch, Sitzen, Knien, Hocke, Liegen – danach frei anpassen.
+- **Figur:** „Figur +“ stellt eine Frau als echtes 3D-Modell (`public/models/michelle.glb`,
+  Mixamo-Skelett, aus den three.js-Beispielen) zu dir gedreht auf den Boden.
+  Becken/Bauch greifen = ganze Figur verschieben/drehen (bleibt aufrecht). Jedes andere
+  Körperteil greifen = genau dieses Gelenk drehen (Oberarm, Unterarm, Oberschenkel,
+  Unterschenkel, Brust, Kopf). Lila Punkte: Hand/Fuß ziehen – ganzer Arm/Bein folgt,
+  Ellbogen/Knie – Knickrichtung. „Pose ▸“: Stehen, Arme hoch, T-Pose, Sitzen, Knien,
+  Hocke, Liegen – danach frei anpassen.
+- **Schwerkraft:** losgelassene Würfel fallen auf den Boden oder auf andere Würfel (stapeln)
+  und legen sich flach hin, Figuren fallen auf den Boden – nichts schwebt.
 - **Feste Plätze:** die App hängt alles an einen dauerhaften Raum-Anker – Würfel und Figuren (samt Pose) stehen
   nach Neustart oder App-Update wieder genau am selben Platz.
 - Werkzeugleiste (Brille, schwebt unten) bzw. Knöpfe (Handy): Würfel +, Figur +, Pose ▸,
@@ -221,7 +224,8 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/projection.js` | Formate: Erkennung, Umrechnung, Vorschaubilder, Greenscreen-Auto |
 | `public/band.js` | Rotes Band im Kamerabild finden |
 | `public/room.js` | Raum-Modus: Würfel in der Durchsicht platzieren und greifen |
-| `public/figure.js` | Gliederpuppe mit Gelenken, Posen und Zwei-Knochen-IK |
+| `public/figure.js` | Figur (3D-Modell) mit Gelenken, Posen und Zwei-Knochen-IK |
+| `public/models/` | 3D-Modell der Figur (GLB mit Mixamo-Skelett) |
 | `upload.js` | Hochladen in Stücken mit Fortsetzen (nginx-njs) |
 | `nginx.conf` | Auslieferung, Cache-Header, Videoliste als JSON (`/videos/`), Hochladen/Löschen (`/upload/`) |
 | `docker-entrypoint.sh` | setzt die Version beim Start |

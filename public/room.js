@@ -2,14 +2,16 @@
 // - Objekte liegen im Raum und bleiben stehen, wenn man herumlaeuft; bewegt wird nur per Greifen.
 // - Hand: Pinch/Greifen = festhalten, loslassen = abstellen. Controller: Grifftaste/Abzug
 //   nah dran oder per Strahl aus der Ferne. Handy: Finger drauf und ziehen.
-// - Figur: am Koerper greifen = ganze Figur bewegen/drehen; an den lila Gelenk-Punkten
-//   ziehen = Arme, Beine, Kopf, Oberkoerper biegen; "Pose ▸" schaltet fertige Posen durch.
+// - Figur (echtes 3D-Modell): Becken/Bauch greifen = ganze Figur bewegen/drehen; jedes andere
+//   Koerperteil greifen = dieses Gelenk drehen (Oberarm, Unterarm, Oberschenkel, ...);
+//   lila Punkte an Haenden/Fuessen ziehen = ganzer Arm/Bein folgt. "Pose ▸" schaltet Posen durch.
+// - Schwerkraft: losgelassene Wuerfel fallen auf den Boden oder auf andere Wuerfel, Figuren auf den Boden.
 // - Boden: Wuerfel und Figuren koennen nicht unter den Boden; nah am Boden losgelassene
 //   Wuerfel legen sich flach hin. (Quest: Bodenhoehe aus der Begrenzung, kein Scan noetig.)
 // - Dauerhafter Raum-Anker (Quest): Objekte stehen nach Neustart/App-Update wieder am selben Platz.
 import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
-import { Figure, POSE_NAMES } from '/figure.js';
+import { Figure, POSE_NAMES, loadFigureModel } from '/figure.js';
 
 const SIZE = 0.2;                       // Wuerfel-Kantenlaenge in Metern
 const COLORS = [0xb69cff, 0x7ee0b0, 0xffb86b, 0xff7a8a, 0x7cc4ff, 0xf5e17a];
@@ -65,6 +67,8 @@ export class Room {
     this.pending = [];                  // Druecke: im naechsten Frame mit frischer Pose verarbeiten
     this.anchorM = new THREE.Matrix4(); // Raum-Anker (Welt <- Anker)
     this.anchored = false;
+    this.vel = new Map();               // Fallgeschwindigkeit je Objekt
+    loadFigureModel().catch(() => {});  // 3D-Modell schon mal laden
 
     // Eingaben: Strahl (controller), Griff (grip), Hand (joints)
     this.inputs = [0, 1].map((i) => {
@@ -184,13 +188,15 @@ export class Room {
     if (quat) m.quaternion.copy(quat);
     m.userData.color = col;
     this.scene.add(m); this.items.push(m);
-    if (!silent) { this._settle(m); this._save(); }
+    if (!silent) { this._floorClamp(m); this._save(); }   // faellt danach per Schwerkraft
     return m;
   }
 
   // Figur hinstellen, zum Betrachter gedreht, Fuesse auf dem Boden
-  addFigure(pos, yaw, joints, silent = false) {
-    const f = new Figure();
+  async addFigure(pos, yaw, joints, silent = false) {
+    let gltf;
+    try { gltf = await loadFigureModel(); } catch { this.note = 'Figur-Modell konnte nicht geladen werden'; this._drawToolbar(); return null; }
+    const f = new Figure(gltf);
     f.position.copy(pos);
     if (yaw === undefined) {
       const cam = new THREE.Vector3().setFromMatrixPosition(this.renderer.xr.getCamera().matrixWorld);
@@ -199,6 +205,7 @@ export class Room {
     f.rotation.set(0, yaw, 0);
     if (joints) f.setJoints(joints);
     this.scene.add(f); this.items.push(f);
+    f.measureBottom();
     if (!silent) { f.ground(this.floorY); this._save(); }
     this.activeFigure = f;
     return f;
@@ -234,7 +241,7 @@ export class Room {
       const p = new THREE.Vector3().setFromMatrixPosition(this.reticle.matrix);
       const q = new THREE.Quaternion().setFromRotationMatrix(this.reticle.matrix);
       const n = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
-      if (kind === 'fig') return this.addFigure(p);
+      if (kind === 'fig') return this.addFigure(p.clone());
       return this.addCube(p.addScaledVector(n, SIZE / 2), q);
     }
     const p = new THREE.Vector3(0, 0, kind === 'fig' ? -1.5 : -0.8).applyMatrix4(cam.matrixWorld);
@@ -256,7 +263,7 @@ export class Room {
     try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {}
   }
 
-  _load() {
+  async _load() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(STORE)); } catch {}
     if (!data) {   // altes Format (nur Wuerfel, ohne Anker)
@@ -271,8 +278,8 @@ export class Room {
       const m = new THREE.Matrix4().compose(new THREE.Vector3().fromArray(o.p), new THREE.Quaternion().fromArray(o.q), new THREE.Vector3(1, 1, 1)).premultiply(M);
       const p = new THREE.Vector3(), q = new THREE.Quaternion(); m.decompose(p, q, new THREE.Vector3());
       if (o.t === 'fig') {
-        const f = this.addFigure(p, 0, o.j, true);
-        f.quaternion.copy(q); f.poseName = o.pose || 'Stehen';
+        const f = await this.addFigure(p, 0, o.j, true);
+        if (f) { f.quaternion.copy(q); f.poseName = o.pose || 'Stehen'; f.update(); f.measureBottom(); }
       } else this.addCube(p, q, o.c, true);
     }
     this._loading = false;
@@ -317,12 +324,13 @@ export class Room {
       if (d < bd) { bd = d; best = { kind: 'handle', fig: f, handle: h, obj: h }; }
     }
     if (best) return best;
+    let bs = null;
     for (const f of this.figures) {
-      for (const p of f.parts) {
-        const box = new THREE.Box3().setFromObject(p).expandByScalar(hand ? 0.03 : 0.05);
-        if (box.containsPoint(pos)) return { kind: 'fig', fig: f, obj: f };
-      }
+      const sg = f.nearestSeg(pos);
+      if (sg.dist < (hand ? 0.03 : 0.05) && (!bs || sg.dist < bs.sg.dist)) bs = { f, sg };
     }
+    if (bs) return bs.sg.body ? { kind: 'fig', fig: bs.f, obj: bs.f }
+      : { kind: 'seg', fig: bs.f, obj: bs.f, seg: bs.f.grabSeg(bs.sg.name, pos) };
     bd = SIZE * 0.9 + (hand ? 0.04 : 0.06);
     for (const c of this.cubes) {
       const d = c.position.distanceTo(pos);
@@ -356,10 +364,14 @@ export class Room {
     const handles = this.figures.flatMap((f) => f.handles), parts = this.figures.flatMap((f) => f.parts);
     const hit = this._rayHit(inp, [...handles, ...parts, ...this.cubes]);
     if (hit) {
+      this.vel.delete(this._figOf(hit.object) || hit.object);
       const o = hit.object;
       let t;
       if (o.userData.handle) t = { kind: 'handle', handle: o, obj: o, fig: this._figOf(o) };
-      else if (parts.includes(o)) { const f = this._figOf(o); t = { kind: 'fig', fig: f, obj: f }; }
+      else if (parts.includes(o)) {
+        const f = this._figOf(o); const sg = f.nearestSeg(hit.point);
+        t = sg.body ? { kind: 'fig', fig: f, obj: f } : { kind: 'seg', fig: f, obj: f, seg: f.grabSeg(sg.name, hit.point) };
+      }
       else t = { kind: 'cube', obj: o };
       this._grabRay(i, t, hit.distance);
       return;
@@ -390,7 +402,8 @@ export class Room {
 
   _grabNear(i, t, pt) {
     const g = { ...t, near: true };
-    if (t.kind === 'handle') {
+    this.vel.delete(t.fig || t.obj);
+    if (t.kind === 'handle' || t.kind === 'seg') {
       g.offset = t.handle.getWorldPosition(new THREE.Vector3()).sub(pt.pos);
     } else {
       const inv = pt.quat.clone().invert();
@@ -408,7 +421,7 @@ export class Room {
     const dir = new THREE.Vector3(0, 0, -1).applyMatrix4(new THREE.Matrix4().extractRotation(inp.ray.matrixWorld));
     const hitP = origin.clone().addScaledVector(dir, dist);
     const g = { ...t, near: false, dist };
-    if (t.kind !== 'handle') g.offset = t.obj.position.clone().sub(hitP);
+    if (t.kind !== 'handle' && t.kind !== 'seg') g.offset = t.obj.position.clone().sub(hitP);
     if (t.fig) this.activeFigure = t.fig;
     this.grabs.set(i, g);
     this._pulse(i, 0.5, 40);
@@ -417,8 +430,11 @@ export class Room {
   _release(i) {
     const g = this.grabs.get(i);
     if (!this.grabs.delete(i)) return;
-    if (g.kind === 'cube') this._settle(g.obj);
-    else if (g.kind === 'fig') g.fig.ground(this.floorY);
+    if (g.fig) {
+      g.fig.measureBottom();
+      // nicht im Boden stecken lassen; schwebt sie, faellt sie (Schwerkraft)
+      if (g.fig.position.y + g.fig.bottom < this.floorY) g.fig.ground(this.floorY);
+    }
     this._save(); this._pulse(i, 0.3, 20);
   }
 
@@ -428,11 +444,47 @@ export class Room {
     if (cube.position.y - h < this.floorY) cube.position.y = this.floorY + h;
   }
 
-  // Nah am Boden losgelassen: flach hinlegen
+  // gelandet: flach hinlegen (sanft animiert)
   _settle(cube) {
-    this._floorClamp(cube);
-    if (cube.position.y - halfHeight(cube.quaternion) > this.floorY + 0.05) return;
     this.settling.set(cube, { q0: cube.quaternion.clone(), q1: alignTo(cube.quaternion, UP), t0: performance.now() });
+  }
+
+  // worauf ein Wuerfel fallen kann: Boden oder Oberseite eines Wuerfels darunter
+  _support(cube) {
+    let s = this.floorY;
+    const bottom = cube.position.y - halfHeight(cube.quaternion);
+    const held = new Set([...this.grabs.values()].map((g) => g.obj));
+    for (const o of this.cubes) {
+      if (o === cube || held.has(o)) continue;
+      if (Math.abs(o.position.x - cube.position.x) < SIZE * 0.9 && Math.abs(o.position.z - cube.position.z) < SIZE * 0.9) {
+        const top = o.position.y + halfHeight(o.quaternion);
+        if (top <= bottom + 0.06 && top > s) s = top;
+      }
+    }
+    return s;
+  }
+
+  // Schwerkraft: alles, was nicht gehalten wird, faellt bis zur Unterlage
+  _gravity(dt) {
+    const held = new Set([...this.grabs.values()].map((g) => g.fig || g.obj));
+    for (const o of this.items) {
+      if (held.has(o) || this.settling.has(o)) continue;
+      const fig = o.isFigure;
+      const bottom = fig ? o.position.y + (o.bottom ?? 0) : o.position.y - halfHeight(o.quaternion);
+      const support = fig ? this.floorY : this._support(o);
+      if (bottom > support + 0.002) {
+        const v = (this.vel.get(o) || 0) + 9.81 * dt;
+        this.vel.set(o, v);
+        o.position.y -= Math.min(v * dt, bottom - support);
+        if (fig) o.update();
+        if (bottom - v * dt <= support + 0.002) {        // gelandet
+          this.vel.delete(o);
+          if (!fig) this._settle(o); else this._save();
+        }
+      } else if (bottom < support - 0.002) {             // steckt drin: obendrauf setzen
+        o.position.y += support - bottom; if (fig) o.update();
+      }
+    }
   }
 
   _pulse(i, v, ms) { try { this.inputs[i].source?.gamepad?.hapticActuators?.[0]?.pulse(v, ms); } catch {} }
@@ -441,8 +493,10 @@ export class Room {
     const cam = this.renderer.xr.getCamera();
     if (id === 'add') this.addCube(new THREE.Vector3(0, -0.15, -0.6).applyMatrix4(cam.matrixWorld));
     else if (id === 'fig') {
-      this.addFigure(new THREE.Vector3(0, 0, -1.4).applyMatrix4(cam.matrixWorld));
-      this.note = 'Figur: am Körper greifen = bewegen, lila Punkte ziehen = Gelenke'; this._drawToolbar();
+      this.note = 'Figur wird geladen …'; this._drawToolbar();
+      this.addFigure(new THREE.Vector3(0, 0, -1.4).applyMatrix4(cam.matrixWorld)).then((f) => {
+        if (f) { this.note = 'Bauch greifen = bewegen · Arm/Bein greifen = Gelenk drehen · lila Punkte = Hand/Fuß'; this._drawToolbar(); }
+      });
     } else if (id === 'pose') this.nextPose();
     else if (id === 'undo') this.undo();
     else if (id === 'clear') this.clear();
@@ -498,7 +552,8 @@ export class Room {
     if (this._anchorStep === 'start' && frame) { this._anchorStep = 'busy'; this._anchorInit(frame); }
     const hasAnchor = this._updateAnchor(frame);
     if (this._anchorStep === 'wait' && (hasAnchor || performance.now() - this._t0 > 2500)) {
-      this._load(); this._anchorStep = 'done'; this._save();
+      this._anchorStep = 'loading';
+      this._load().finally(() => { this._anchorStep = 'done'; this._save(); });
     }
     // Ziel-Ring auf erkannten Flaechen
     if (this.hitSource && frame) {
@@ -529,7 +584,7 @@ export class Room {
       if (g.near) {
         const pt = this._point(inp);
         if (!pt) continue;
-        if (g.kind === 'handle') target = pt.pos.clone().add(g.offset);
+        if (g.kind === 'handle' || g.kind === 'seg') target = pt.pos.clone().add(g.offset);
         else { target = pt.pos.clone().add(g.offset.clone().applyQuaternion(pt.quat)); quat = pt.quat.clone().multiply(g.rel); }
       } else {
         const origin = new THREE.Vector3().setFromMatrixPosition(inp.ray.matrixWorld);
@@ -538,36 +593,39 @@ export class Room {
         if (g.offset) target.add(g.offset);
       }
       if (g.kind === 'handle') { g.fig.drag(g.handle, target); continue; }
+      if (g.kind === 'seg') { g.fig.dragSeg(g.seg, target); continue; }
       g.obj.position.copy(target);
       if (g.kind === 'fig') {
         // Figur bleibt aufrecht: nur die Drehung um die Hochachse uebernehmen
         if (quat) { const e = new THREE.Euler().setFromQuaternion(quat, 'YXZ'); g.obj.rotation.set(0, e.y, 0); }
-        const fy = this.floorY;
-        g.obj.updateMatrixWorld(true);
-        const box = new THREE.Box3(); g.fig.parts.forEach((p) => box.expandByObject(p));
-        if (box.min.y < fy) g.obj.position.y += fy - box.min.y;   // nicht in den Boden
+        if (g.obj.position.y + (g.obj.bottom ?? 0) < this.floorY) g.obj.position.y = this.floorY - g.obj.bottom;   // nicht in den Boden
+        g.obj.update();
       } else {
         if (quat) g.obj.quaternion.copy(quat);
         this._floorClamp(g.obj);                                  // nicht unter den Boden
       }
     }
-    // sanft flach anlegen
+    // Schwerkraft
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - (this._lastT || now)) / 1000); this._lastT = now;
+    this._gravity(dt);
+    // sanft flach anlegen (auf Boden oder Wuerfel)
     for (const [c, a] of this.settling) {
-      const k = Math.min(1, (performance.now() - a.t0) / 180);
+      const k = Math.min(1, (now - a.t0) / 180);
       c.quaternion.slerpQuaternions(a.q0, a.q1, k);
-      c.position.y = this.floorY + halfHeight(c.quaternion);   // liegt auf dem Boden auf
+      c.position.y = this._support(c) + halfHeight(c.quaternion);
       if (k >= 1) { this.settling.delete(c); this._save(); }
     }
     // Hervorheben, was man gerade greifen koennte
     let hoverTool = null;
     const hot = new Set(), hotHandles = new Set();
-    for (const g of this.grabs.values()) { if (g.kind === 'handle') hotHandles.add(g.handle); else hot.add(g.obj); }
+    for (const g of this.grabs.values()) { if (g.kind === 'handle') hotHandles.add(g.handle); else hot.add(g.fig || g.obj); }
     const handles = this.figures.flatMap((f) => f.handles), parts = this.figures.flatMap((f) => f.parts);
     for (const inp of this.inputs) {
       if (!inp.mode) continue;
       const pt = this._point(inp);
       const nt = pt && this._nearTarget(pt.pos, pt.hand);
-      if (nt) { if (nt.kind === 'handle') hotHandles.add(nt.handle); else hot.add(nt.obj); }
+      if (nt) { if (nt.kind === 'handle') hotHandles.add(nt.handle); else hot.add(nt.fig || nt.obj); }
       if (this.toolbar.visible) {
         const h = this._rayHit(inp, [this.toolbar]);
         if (h) hoverTool = this._toolAt(h.uv);
@@ -583,8 +641,8 @@ export class Room {
     }
     for (const c of this.cubes) c.material.emissive.setHex(hot.has(c) ? 0x333333 : 0x000000);
     for (const f of this.figures) {
-      f.mat.emissive.setHex(hot.has(f) ? 0x2a2a2a : 0x000000);
-      for (const h of f.handles) h.scale.setScalar(hotHandles.has(h) ? 0.034 : 0.022);
+      f.parts.forEach((m) => m.material.emissive?.setHex(hot.has(f) ? 0x222222 : 0x000000));
+      for (const h of f.handles) h.scale.setScalar(hotHandles.has(h) ? 0.042 : 0.028);
     }
     if (hoverTool !== this.toolHover) { this.toolHover = hoverTool; this._drawToolbar(); }
     this.toolbar.visible = !this.phone;

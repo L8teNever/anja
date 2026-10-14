@@ -35,6 +35,7 @@
       </div>
       <div class="top-actions">
         <span id="net" class="chip" title="Verbindung">online</span>
+        <button id="mr-btn" class="round" aria-label="Mixed Reality" title="Mixed Reality: Umgebung sehen, Beine blau" hidden><span class="material">accessibility</span></button>
         <button id="room-btn" class="round" aria-label="Raum-Modus" title="Raum-Modus: Würfel in dein Zimmer stellen" hidden><span class="material">add_box</span></button>
         <button id="up-btn" class="round accent" aria-label="Video hochladen" title="360°-Video hochladen" hidden><span class="material">upload</span></button>
         <input id="up-file" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.m4v,.webm,.mov,.mkv" multiple hidden>
@@ -166,6 +167,14 @@
       <button id="ro-undo" class="round" aria-label="Letzten weg"><span class="material">undo</span></button>
       <button id="ro-clear" class="round" aria-label="Alle weg"><span class="material">delete</span></button>
     </div>
+  </div>
+
+  <!-- Mixed Reality: volle Durchsicht, Unterkoerper blau -->
+  <div id="mr-stage" class="room-stage" hidden></div>
+  <div id="mr-overlay" class="xr-overlay" hidden>
+    <button id="mo-exit" class="pill xo-exit"><span class="material">close</span>Beenden</button>
+    <div id="mo-status" class="ro-hint glass"></div>
+    <div class="xo-bar glass"><button id="mo-blue" class="pill pill-accent">Blau stärker/schwächer</button></div>
   </div>
 
   <!-- Knoepfe im Handy-Durchsicht-Modus (WebXR DOM-Overlay) -->

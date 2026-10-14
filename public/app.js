@@ -765,6 +765,29 @@ function vrPages() {
   return pages;
 }
 
+/* ---------------- Mixed Reality ----------------
+ * Volle Durchsicht ohne Video; Beine/Fuesse werden blau eingefaerbt (Quest 3: Tiefensensor).
+ */
+let mr = null;
+navigator.xr?.isSessionSupported?.('immersive-ar').then((ok) => { $('mr-btn').hidden = !ok; }).catch(() => {});
+$('mr-btn').addEventListener('click', async () => {
+  if (mr) return;
+  const { MixedReality } = await import('/mr.js');
+  const stage = $('mr-stage'), ov = $('mr-overlay');
+  stage.hidden = false; ov.hidden = false;
+  mr = new MixedReality(stage);
+  const close = () => { clearInterval(mr?._st); mr?.dispose(); mr = null; stage.hidden = true; ov.hidden = true; };
+  mr.onEnd = close;
+  try {
+    const sess = await mr.start(ov);
+    if (!sess.domOverlayState) ov.hidden = true;   // Brille: Griff im Blickfeld
+    mr._st = setInterval(() => { if (mr) $('mo-status').textContent = mr.status; }, 500);
+  } catch (e) { close(); toast(`Mixed Reality ging nicht (${e.message})`, 4000); }
+});
+$('mr-overlay').addEventListener('beforexrselect', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+$('mo-exit').addEventListener('click', () => mr?.end());
+$('mo-blue').addEventListener('click', () => mr?.toggleBlue());
+
 /* ---------------- Player ---------------- */
 let viewer = null, video = null;
 

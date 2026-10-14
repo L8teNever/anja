@@ -262,6 +262,10 @@ export class MixedReality {
     this._gaze(cam);
     this.measure.update(this.legs.skel.j.pelvis, this.legs.floorY);
     if (hov !== this.hover) { this.hover = hov; this._drawHandle(); }
+    // three.js zeichnet bei aktivem Tiefensensor eine eigene Verdeckungs-Flaeche, deren Shader keine Farbe
+    // schreibt -> im Passthrough schwarze Pixel-Krisel. Wir lesen die Tiefe selbst aus, also aus damit.
+    const dm = this.renderer.xr.getDepthSensingMesh?.();
+    if (dm) dm.visible = false;
     this.renderer.render(this.scene, this.camera);
   }
 

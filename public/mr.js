@@ -10,6 +10,14 @@ import { BodyTracker } from '/body-tracker.js';
 import { BodyCubes } from '/mr-cubes.js';
 
 const BLUE = new THREE.Color(0x3d8bff);
+// Hand-Knochen (Handflaeche, Daumen, Finger) aus den WebXR-Gelenken
+const F = (f) => [[`${f}-phalanx-proximal`, `${f}-phalanx-intermediate`], [`${f}-phalanx-intermediate`, `${f}-tip`]];
+const HAND_BONES = [
+  ['wrist', 'index-finger-phalanx-proximal', 0.02], ['wrist', 'middle-finger-phalanx-proximal', 0.022],
+  ['wrist', 'ring-finger-phalanx-proximal', 0.02], ['wrist', 'pinky-finger-phalanx-proximal', 0.018],
+  ['thumb-metacarpal', 'thumb-phalanx-proximal'], ['thumb-phalanx-proximal', 'thumb-phalanx-distal'], ['thumb-phalanx-distal', 'thumb-tip'],
+  ...F('index-finger'), ...F('middle-finger'), ...F('ring-finger'), ...F('pinky-finger'),
+];
 const JOINTS = [['wrist', 0.08], ['middle-finger-metacarpal', 0.08], ['index-finger-tip', 0.045], ['thumb-tip', 0.045], ['pinky-finger-tip', 0.045]];
 
 export class MixedReality {
@@ -45,7 +53,7 @@ export class MixedReality {
     // Skelett sichtbar machen (Knopf "Skelett")
     this.skelLines = new THREE.LineSegments(new THREE.BufferGeometry(),
       new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false }));
-    this.skelLines.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.legs.skel.bones.length * 6), 3));
+    this.skelLines.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array((this.legs.skel.bones.length + 30) * 6), 3));
     this.skelLines.frustumCulled = false; this.skelLines.renderOrder = 26; this.skelLines.visible = false;
     this.scene.add(this.skelLines);
 
@@ -185,7 +193,7 @@ export class MixedReality {
     // Tiefensensor: alle Bildpunkte, die zu deinem Koerper gehoeren
     const was = this.depthOk;
     const pts = this._handPoints(frame, cam);
-    this.legs.update(frame, t, pts, this.wrists || {});
+    this.legs.update(frame, t, pts, this.wrists || {}, this.handCaps || {});
     this._drawSkeleton();
     this.depthOk = this.legs.ok;
     this.cubes.update(this.ctx);
@@ -221,7 +229,7 @@ export class MixedReality {
   _handPoints(frame, cam) {
     const out = [], ref = this.renderer.xr.getReferenceSpace();
     const anchors = this.ctx.anchors;
-    this.wrists = {};
+    this.wrists = {}; this.handCaps = {};
     if (!frame || !ref) return out;
     const V = (p) => new THREE.Vector3(p.x, p.y, p.z);
     for (const src of frame.session.inputSources) {
@@ -232,6 +240,15 @@ export class MixedReality {
           const j = src.hand.get(name), p = j && frame.getJointPose?.(j, ref);
           if (p) { out.push({ pos: p.transform.position, r, hand: true }); pts.push(V(p.transform.position)); }
         }
+        // Hand-Knochen fuers Einfaerben und das Skelett
+        const jp = {};
+        for (const [name, j] of src.hand) { const p = frame.getJointPose?.(j, ref); if (p) jp[name] = p; }
+        const caps = [];
+        for (const [a, b, r] of HAND_BONES) {
+          const pa = jp[a], pb = jp[b];
+          if (pa && pb) caps.push({ a: V(pa.transform.position), b: V(pb.transform.position), r: (r || Math.max(pa.radius || 0.01, pb.radius || 0.01)) + 0.004 });
+        }
+        if (caps.length) this.handCaps[src.handedness === 'left' ? 'l' : 'r'] = caps;
         const w = src.hand.get('wrist'), wp = w && frame.getJointPose?.(w, ref);
         if (wp) {
           const m = new THREE.Matrix4().fromArray(wp.transform.matrix);
@@ -246,6 +263,7 @@ export class MixedReality {
           out.push({ pos: p.transform.position, r: 0.11, hand: true });
           anchors.set(key, { m: new THREE.Matrix4().fromArray(p.transform.matrix), pts: [V(p.transform.position)], r: 0.1 });
           this.wrists[src.handedness === 'left' ? 'l' : 'r'] = V(p.transform.position);
+          this.handCaps[src.handedness === 'left' ? 'l' : 'r'] = [{ a: V(p.transform.position), b: V(p.transform.position), r: 0.09 }];
         }
       }
     }
@@ -265,7 +283,9 @@ export class MixedReality {
     this.skelLines.visible = !!this.showSkel && this.legs.skel.ready;
     if (!this.skelLines.visible) return;
     const a = this.skelLines.geometry.attributes.position;
-    this.legs.skel.bones.forEach((b, i) => { a.setXYZ(i * 2, b.a.x, b.a.y, b.a.z); a.setXYZ(i * 2 + 1, b.b.x, b.b.y, b.b.z); });
+    const segs = [...this.legs.skel.bones, ...(this.handCaps?.l || []), ...(this.handCaps?.r || [])].slice(0, a.count / 2);
+    segs.forEach((b, i) => { a.setXYZ(i * 2, b.a.x, b.a.y, b.a.z); a.setXYZ(i * 2 + 1, b.b.x, b.b.y, b.b.z); });
+    this.skelLines.geometry.setDrawRange(0, segs.length * 2);
     a.needsUpdate = true;
   }
 

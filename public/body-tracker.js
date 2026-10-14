@@ -15,6 +15,7 @@ import { Skeleton, BONES } from '/skeleton.js';
 
 const W = 96, H = 72;            // Aufloesung der Auswertung
 const MAX_PLANES = 4;
+const HAND_CAPS = 30;             // 15 Hand-Knochen je Hand
 
 const COMMON = `
 uniform sampler2DArray depthColor;
@@ -59,7 +60,9 @@ uniform sampler2D bodyMask;
 uniform mat4 maskVP;                 // Welt -> Bild der Auswertung
 uniform float maskOn, floorY;
 uniform vec4 planes[${MAX_PLANES}];   // Auflageflaechen: Hoehe (x), aktiv (y)
-uniform vec4 hands[16];              // Kugeln um Haende/Controller (xyz, r)
+uniform vec4 handA[${HAND_CAPS}];     // Hand-Knochen aus dem Hand-Tracking: Start (xyz) + Radius (0 = aus)
+uniform vec3 handB[${HAND_CAPS}];
+uniform vec4 handBound[2];           // grobe Kugel je Hand (schnelles Aussortieren)
 uniform vec3 head, color;
 uniform float strength, time;
 uniform vec4 capA[${BONES.length}];   // Skelett-Knochen: Start (xyz) + Radius
@@ -80,7 +83,16 @@ void main() {
   vec3 dx = dFdx(w.xyz), dy = dFdy(w.xyz);
   if (w.w < 0.5) discard;
   float hand = 0.0;
-  for (int i = 0; i < 16; i++) if (hands[i].w > 0.0) hand = max(hand, smoothstep(hands[i].w, hands[i].w * 0.7, distance(w.xyz, hands[i].xyz)));
+  for (int hh = 0; hh < 2; hh++) {
+    if (handBound[hh].w <= 0.0 || distance(w.xyz, handBound[hh].xyz) > handBound[hh].w) continue;
+    for (int i = hh * ${HAND_CAPS / 2}; i < (hh + 1) * ${HAND_CAPS / 2}; i++) {
+      if (handA[i].w <= 0.0) continue;
+      vec3 a = handA[i].xyz, ab = handB[i] - a;
+      float t = clamp(dot(w.xyz - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+      float d = length(w.xyz - a - ab * t) - handA[i].w;
+      hand = max(hand, smoothstep(0.012, 0.0, d));
+    }
+  }
   float k = hand;
   if (k < 0.99 && maskOn > 0.5) {
     float ny = abs(normalize(cross(dx, dy)).y);
@@ -112,7 +124,9 @@ export class BodyTracker {
       rawToM: { value: 0.001 }, rtSize: { value: new THREE.Vector2(W, H) },
       bodyMask: { value: null }, maskVP: { value: new THREE.Matrix4() }, maskOn: { value: 0 },
       floorY: { value: 0 }, planes: { value: Array.from({ length: MAX_PLANES }, () => new THREE.Vector4()) },
-      hands: { value: Array.from({ length: 16 }, () => new THREE.Vector4()) },
+      handA: { value: Array.from({ length: HAND_CAPS }, () => new THREE.Vector4()) },
+      handB: { value: Array.from({ length: HAND_CAPS }, () => new THREE.Vector3()) },
+      handBound: { value: [new THREE.Vector4(), new THREE.Vector4()] },
       head: { value: new THREE.Vector3() },
       capA: { value: BONES.map(() => new THREE.Vector4()) }, capB: { value: BONES.map(() => new THREE.Vector3()) },
       color: { value: new THREE.Color(0x3d8bff) }, strength: { value: 1 }, time: { value: 0 },
@@ -144,8 +158,9 @@ export class BodyTracker {
     this.skel = new Skeleton();
   }
 
-  // pro XR-Frame; points: Liste von {pos, r} (Haende/Controller/Koerper-Gelenke); wrists: {l, r}
-  update(frame, t, points = [], wrists = {}) {
+  // pro XR-Frame; points: Liste von {pos, r} (Startpunkte); wrists: {l, r};
+  // handCaps: {l: [{a, b, r}], r: [...]} Hand-Knochen (Handflaeche/Finger oder Controller)
+  update(frame, t, points = [], wrists = {}, handCaps = {}) {
     const r = this.renderer, xr = r.xr, session = xr.getSession();
     const tex = xr.getDepthTexture?.();
     this.ok = false;
@@ -179,9 +194,19 @@ export class BodyTracker {
     // Skelett nachfuehren (Kopf + Haende jedes Frame, Beine aus der letzten Auswertung)
     this.skel.predict(head, new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld), wrists, this.floorY);
     this.skel.bones.forEach((b, i) => { u.capA.value[i].set(b.a.x, b.a.y, b.a.z, b.r); u.capB.value[i].copy(b.b); });
-    // nur die echten Hand-Punkte direkt einfaerben, Gelenke dienen als Startpunkte
-    const handPts = points.filter((p) => p.hand);
-    u.hands.value.forEach((h, i) => { const p = handPts[i]; if (p) h.set(p.pos.x, p.pos.y, p.pos.z, p.r); else h.set(0, 0, 0, 0); });
+    // Haende direkt aus dem Hand-Tracking einfaerben
+    this.handCaps = handCaps;
+    ['l', 'r'].forEach((side, hh) => {
+      const caps = handCaps[side] || [], half = HAND_CAPS / 2;
+      const c = new THREE.Vector3(); let rad = 0;
+      caps.forEach((cp) => c.add(cp.a).add(cp.b)); if (caps.length) c.divideScalar(caps.length * 2);
+      caps.forEach((cp) => { rad = Math.max(rad, c.distanceTo(cp.a) + cp.r, c.distanceTo(cp.b) + cp.r); });
+      u.handBound.value[hh].set(c.x, c.y, c.z, caps.length ? rad + 0.02 : 0);
+      for (let i = 0; i < half; i++) {
+        const cp = caps[i], A = u.handA.value[hh * half + i], B = u.handB.value[hh * half + i];
+        if (cp) { A.set(cp.a.x, cp.a.y, cp.a.z, cp.r); B.copy(cp.b); } else A.set(0, 0, 0, 0);
+      }
+    });
 
     if (!this.grabFail && this.n++ % 2 === 0) {
       try { this._segment(head, points); } catch (err) { this.grabFail = true; console.warn('Koerper-Auswertung aus:', err); }
@@ -296,6 +321,12 @@ export class BodyTracker {
       this.pts[nc * 3] = P(i, 0); this.pts[nc * 3 + 1] = P(i, 1); this.pts[nc * 3 + 2] = P(i, 2); nc++;
     }
     this.skel.fit(this.pts, nc);
+    // Oberkoerper/Arme: alle erkannten Punkte (ohne Haende)
+    nc = 0;
+    for (let i = 0; i < N; i++) if (lab[i] === 1) {
+      this.pts[nc * 3] = P(i, 0); this.pts[nc * 3 + 1] = P(i, 1); this.pts[nc * 3 + 2] = P(i, 2); nc++;
+    }
+    this.skel.fitUpper(this.pts, nc);
     // endgueltig: nur was in einem Knochen liegt
     for (let i = 0; i < N; i++) if (lab[i] === 1 && this.skel.dist(P(i, 0), P(i, 1), P(i, 2)) > 0.05) lab[i] = 2;
     // erkannte Koerperpunkte (Welt) fuer angeheftete Objekte

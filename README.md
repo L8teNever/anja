@@ -142,7 +142,9 @@ stehend, sitzend und liegend.
 - **Ohne Tiefensensor** (ältere Brillen, Handy): Beine werden aus der Kopfposition geschätzt.
 - **Skelett** (`public/skeleton.js`): Kopf und Hände sind bekannt, daraus Nacken, Schultern, Becken und
   Arme (IK). Die Beine (Knie, Knöchel, Zehen mit festen Knochenlängen, Beinlänge im Stehen gelernt) werden
-  aus dem Tiefensensor eingepasst. Blau wird nur, was in einem Knochen liegt. Knopf „Skelett“ zeigt es an.
+  aus dem Tiefensensor eingepasst, ebenso Ellbogen-Stellung und Rumpf-Neigung. Der Unterarm endet genau am
+  getrackten Handgelenk; Handfläche und Finger sind eigene Knochen direkt aus dem Hand-Tracking.
+  Blau wird nur, was in einem Knochen liegt. Knopf „Skelett“ zeigt es an.
 - **Würfel anheften** (`public/mr-cubes.js`): „Würfel“ erzeugt einen Würfel vor dir. Greifen mit
   Pinch/Trigger (nah oder per Strahl), loslassen an Hand, Unterarm, Bein, Bauch oder Brust – er haftet
   dort und bewegt sich mit (Hände/Controller exakt, sonst mit dem Knochen des Skeletts).

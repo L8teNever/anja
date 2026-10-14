@@ -1,6 +1,7 @@
 // Koerper-Skelett fuer den Mixed-Reality-Modus.
 // Bekannt sind: Kopf (Brille) und Haende/Controller. Daraus folgen Nacken, Schultern, Becken und Arme
-// (Arme per 2-Knochen-IK zwischen Schulter und Handgelenk). Die Beine werden aus dem Tiefensensor
+// (Arme per 2-Knochen-IK zwischen Schulter und getracktem Handgelenk). Ellbogen-Stellung und Rumpf-Neigung
+// werden an den Tiefensensor angepasst. Die Hand selbst (Handflaeche, Finger) kommt direkt aus dem Hand-Tracking. Die Beine werden aus dem Tiefensensor
 // eingepasst (Knie, Knoechel, Zehen mit festen Knochenlaengen) und im Koerper-Bezug gemerkt,
 // damit sie mitgehen, wenn du dich bewegst und nicht hinschaust.
 // Jeder Knochen ist eine Kapsel (Strecke + Radius): nur was darin liegt, kann zu dir gehoeren.
@@ -42,6 +43,10 @@ export class Skeleton {
     this.boneMap = Object.fromEntries(this.bones.map((b) => [b.name, b]));
     // eingepasste Beine im Becken-Bezug (lokal): {kn, an, to}
     this.leg = { l: null, r: null };
+    this.torsoBase = new THREE.Vector3(0, -1, 0);
+    this.lean = 0;                       // Vor-/Zuruecklehnen (rad)
+    this.swivel = { L: 0, R: 0 };        // Ellbogen-Drehung um die Schulter-Hand-Achse (rad)
+    this.ik = { L: null, R: null };
     this._B = new THREE.Matrix4(); this._Bi = new THREE.Matrix4();
   }
 
@@ -69,10 +74,13 @@ export class Skeleton {
       td = up.clone().negate(); td.y = Math.max(-0.6, Math.min(0.2, td.y)); td.normalize();
       side = right.clone().addScaledVector(td, -right.dot(td)).normalize();
     }
-    this.torsoDir.lerp(td, k).normalize();
-    this.side.lerp(side, k); this.side.addScaledVector(this.torsoDir, -this.side.dot(this.torsoDir)).normalize();
-    this.fwd.crossVectors(this.side, this.torsoDir).negate().normalize();   // Brust-Richtung
+    this.torsoBase.lerp(td, k).normalize();
+    this.side.lerp(side, k); this.side.addScaledVector(this.torsoBase, -this.side.dot(this.torsoBase)).normalize();
+    this.fwd.crossVectors(this.side, this.torsoBase).negate().normalize();   // Brust-Richtung
     if (this.fwd.dot(this.lying ? UP : yawFwd) < 0) this.fwd.negate();
+    // Vor-/Zuruecklehnen (aus dem Tiefensensor eingepasst)
+    this.torsoDir.copy(this.torsoBase).multiplyScalar(Math.cos(this.lean)).addScaledVector(this.fwd, Math.sin(this.lean)).normalize();
+    this.fwd.addScaledVector(this.torsoDir, -this.fwd.dot(this.torsoDir)).normalize();
 
     const J = this.j, T = this.torsoDir, S = this.side;
     J.neck.copy(head).add(new THREE.Vector3(0, -0.1, 0.08).applyQuaternion(q));   // Drehpunkt hinter/unter den Augen
@@ -92,17 +100,26 @@ export class Skeleton {
     // Arme
     for (const s of ['L', 'R']) {
       const sh = J['sh' + s], el = J['el' + s], wr = J['wr' + s], w = wrists[s.toLowerCase()];
+      this.ik[s] = null;
       if (w) {
+        // Unterarm endet immer genau am getrackten Handgelenk
         wr.copy(w);
         const dir = wr.clone().sub(sh); let d = dir.length();
         if (d < 1e-4) { dir.copy(T); d = 0.01; } else dir.divideScalar(d);
-        d = Math.min(d, UPPER_ARM + FOREARM - 1e-3);
-        const a = (UPPER_ARM * UPPER_ARM - FOREARM * FOREARM + d * d) / (2 * d);
-        const h = Math.sqrt(Math.max(0, UPPER_ARM * UPPER_ARM - a * a));
+        const reach = UPPER_ARM + FOREARM;
+        let a, h = 0;
+        if (d >= reach) a = d * UPPER_ARM / reach;          // gestreckt
+        else {
+          a = (UPPER_ARM * UPPER_ARM - FOREARM * FOREARM + d * d) / (2 * d);
+          h = Math.sqrt(Math.max(0, UPPER_ARM * UPPER_ARM - a * a));
+        }
+        // Ellbogen-Richtung: nach unten/aussen/hinten, gedreht um die Schulter-Hand-Achse (eingepasst)
         const pole = T.clone().addScaledVector(S, s === 'L' ? -0.4 : 0.4).addScaledVector(this.fwd, -0.3);
         pole.addScaledVector(dir, -pole.dot(dir)); if (pole.lengthSq() < 1e-6) pole.copy(S); pole.normalize();
-        el.copy(sh).addScaledVector(dir, a).addScaledVector(pole, h);
-        wr.copy(sh).addScaledVector(dir, d);
+        const bi = new THREE.Vector3().crossVectors(dir, pole);
+        this.ik[s] = { sh: sh.clone(), wr: wr.clone(), dir, a, h, pole: pole.clone(), bi };
+        const sw = this.swivel[s];
+        el.copy(sh).addScaledVector(dir, a).addScaledVector(pole, h * Math.cos(sw)).addScaledVector(bi, h * Math.sin(sw));
       } else {
         el.copy(sh).addScaledVector(T, UPPER_ARM);
         wr.copy(el).addScaledVector(T, FOREARM);
@@ -179,6 +196,43 @@ export class Skeleton {
     let best = null, bd = maxD;
     for (const b of this.bones) { const d = segDist(p.x, p.y, p.z, b.a, b.b) - b.r; if (d < bd) { bd = d; best = b; } }
     return best;
+  }
+
+  // Oberkoerper und Arme aus erkannten Punkten einpassen (A: Float32Array xyz, n Punkte)
+  fitUpper(A, n) {
+    if (!this.ready || n < 10) return;
+    const J = this.j;
+    const count = (test) => { let c = 0; for (let k = 0; k < n; k++) if (test(A[k * 3], A[k * 3 + 1], A[k * 3 + 2])) c++; return c; };
+    const nearLegs = (x, y, z) => this.dist(x, y, z, true) < 0.02;
+    // Ellbogen: Drehwinkel, bei dem Ober- und Unterarm die meisten Punkte treffen (nicht im Rumpf)
+    for (const s of ['L', 'R']) {
+      const ik = this.ik[s];
+      if (!ik || ik.h < 0.03) continue;
+      const neck = J.neck, pel = J.pelvis;
+      let best = this.swivel[s], bestScore = -1, cur = -1;
+      for (const off of [0, -0.25, 0.25, -0.5, 0.5, -0.85, 0.85, -1.3, 1.3]) {
+        const sw = Math.max(-1.7, Math.min(1.7, this.swivel[s] + off));
+        const el = ik.sh.clone().addScaledVector(ik.dir, ik.a).addScaledVector(ik.pole, ik.h * Math.cos(sw)).addScaledVector(ik.bi, ik.h * Math.sin(sw));
+        const sc = count((x, y, z) => segDist(x, y, z, neck, pel) > 0.16 && !nearLegs(x, y, z)
+          && (segDist(x, y, z, ik.sh, el) < 0.085 || segDist(x, y, z, el, ik.wr) < 0.07));
+        if (off === 0) cur = sc;
+        if (sc > bestScore) { bestScore = sc; best = sw; }
+      }
+      if (bestScore >= 6 && bestScore > cur + 2) this.swivel[s] += (best - this.swivel[s]) * 0.5;
+    }
+    // Rumpf: Neigung, bei der die meisten Punkte im Rumpf liegen (Arme/Beine ausgenommen)
+    const T0 = this.torsoBase, F = this.fwd;
+    let bestL = this.lean, bestS = -1, curS = -1;
+    for (const off of [0, -0.12, 0.12, -0.25, 0.25]) {
+      const l = Math.max(-0.4, Math.min(0.45, this.lean + off));
+      const t = T0.clone().multiplyScalar(Math.cos(l)).addScaledVector(F, Math.sin(l)).normalize();
+      const a = J.neck.clone().addScaledVector(t, 0.14), b = J.neck.clone().addScaledVector(t, TORSO);
+      const sc = count((x, y, z) => !nearLegs(x, y, z) && segDist(x, y, z, a, b) < 0.17);
+      if (off === 0) curS = sc;
+      if (sc > bestS) { bestS = sc; bestL = l; }
+    }
+    if (bestS >= 15 && bestS > curS * 1.08 + 2) this.lean += (bestL - this.lean) * 0.3;
+    else this.lean *= 0.995;          // ohne Hinweise langsam zurueck zur Grundhaltung
   }
 
   // Beine aus erkannten Punkten einpassen (A: Float32Array xyz, n Punkte)

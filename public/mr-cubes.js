@@ -45,8 +45,8 @@ export class BodyCubes {
     this.cubes = this.cubes.filter((c) => c.breasts);
   }
 
-  // Brueste am Oberkoerper: aus -> klein -> mittel -> gross -> aus. Haften am Rumpf-Knochen,
-  // lassen sich greifen und verschieben (Loslassen haftet wieder am naechsten Knochen).
+  // Brueste am Oberkoerper: aus -> klein -> mittel -> gross -> aus. Haften am Rumpf-Knochen (Hoehe aus der
+  // Koerpergroesse), wackeln bei Bewegung/Springen und geben nach, wenn die Finger sie beruehren.
   cycleBreasts() {
     const old = this.cubes.find((c) => c.breasts);
     const next = old ? (old.size + 1) % 4 : 1;
@@ -72,15 +72,20 @@ export class BodyCubes {
     const mat = new THREE.MeshStandardMaterial({ color: 0xe9b99b, roughness: 0.55, metalness: 0, transparent: true });
     const g = new THREE.Group();
     for (const sx of [-1, 1]) {
-      const m = new THREE.Mesh(geo, mat);
+      const gg = geo.clone();
+      const m = new THREE.Mesh(gg, mat);
       m.position.set(sx * (0.07 + R * 0.45), 0, 0); m.rotation.y = sx * 0.18;
       m.renderOrder = 25;
+      // Physik: Feder-Daempfer fuer die Spitze (Wackeln bei Bewegung), Dellen beim Anfassen
+      m.userData.phys = { base: Float32Array.from(gg.attributes.position.array), R, D,
+        d: new THREE.Vector3(), v: new THREE.Vector3(), prevP: null, prevV: new THREE.Vector3() };
       g.add(m);
     }
+    geo.dispose();
     g.matrixAutoUpdate = false;
     this.scene.add(g);
     // Rumpf-Knochen: Ursprung oben an der Brust, y nach unten, z nach vorne
-    const c = { mesh: g, mode: 'bone', key: 'torso', rel: rel || new THREE.Matrix4().makeTranslation(0, 0.2, 0.09), by: null, breasts: true, size: next };
+    const c = { mesh: g, mode: 'bone', key: 'torso', rel: rel || this._breastRel(), by: null, breasts: true, size: next };
     const b = this.tracker.skel.boneMap.torso;
     g.matrix.multiplyMatrices(b.m, c.rel); g.matrixWorld.copy(g.matrix);
     this.cubes.push(c);
@@ -92,13 +97,14 @@ export class BodyCubes {
     const o = new THREE.Vector3().setFromMatrixPosition(ctrl.matrixWorld);
     let best = null, bd = 0.13;
     for (const c of this.cubes) {
+      if (c.breasts) continue;               // Brust kann man nicht greifen, nur anfassen
       const d = o.distanceTo(new THREE.Vector3().setFromMatrixPosition(c.mesh.matrixWorld));
       if (d < bd) { bd = d; best = c; }
     }
     if (best) return best;
     this.raycaster.ray.origin.copy(o);
     this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(new THREE.Matrix4().extractRotation(ctrl.matrixWorld));
-    const hit = this.raycaster.intersectObjects(this.cubes.map((c) => c.mesh), true)[0];
+    const hit = this.raycaster.intersectObjects(this.cubes.filter((c) => !c.breasts).map((c) => c.mesh), true)[0];
     if (!hit) return null;
     let h = hit.object;
     while (h && !this.cubes.some((c) => c.mesh === h)) h = h.parent;
@@ -135,8 +141,73 @@ export class BodyCubes {
     c.rel.copy(m).invert().multiply(c.mesh.matrixWorld);
   }
 
+  // Lage am Rumpf aus den Koerpermassen: Brustwarzen-Hoehe ~0.72 x Groesse
+  _breastRel() {
+    const H = this.tracker.skel.dim.H;
+    return new THREE.Matrix4().makeTranslation(0, 0.186 * H - 0.14, 0.09);
+  }
+
+  // Feder-Physik + Dellen durch Finger (ctx.fingers: Vector3[] Welt)
+  _breastPhysics(g, fingers, dt) {
+    const K = 180, C = 5;
+    const inv = new THREE.Matrix4(), q = new THREE.Quaternion(), qi = new THREE.Quaternion();
+    for (const m of g.children) {
+      const ph = m.userData.phys; if (!ph) continue;
+      m.updateMatrixWorld();
+      const p = new THREE.Vector3().setFromMatrixPosition(m.matrixWorld);
+      if (!ph.prevP) { ph.prevP = p.clone(); continue; }
+      const vel = p.clone().sub(ph.prevP).divideScalar(dt);
+      ph.prevV.lerp(vel, 0.5);                                   // gegen Zittern der Kopf-Daten
+      const acc = ph.accV ? ph.prevV.clone().sub(ph.accV).divideScalar(dt) : new THREE.Vector3();
+      ph.accV = ph.prevV.clone(); ph.prevP.copy(p);
+      if (acc.length() < 0.4) acc.set(0, 0, 0);
+      if (acc.length() > 60) acc.setLength(60);
+      // Finger: in Brust-Koordinaten pruefen
+      inv.copy(m.matrixWorld).invert();
+      m.matrixWorld.decompose(new THREE.Vector3(), q, new THREE.Vector3()); qi.copy(q).invert();
+      const c0 = new THREE.Vector3(0, 0, ph.D * 0.35), touch = [];
+      for (const f of fingers) {
+        const fl = f.clone().applyMatrix4(inv), dist = fl.distanceTo(c0);
+        const pen = ph.R * 1.02 + 0.012 - dist;
+        if (pen > 0) {
+          touch.push(fl);
+          const n = fl.clone().sub(c0).normalize().applyQuaternion(q);       // Welt-Richtung zum Finger
+          ph.v.addScaledVector(n, -pen * 25);                                // weggedrueckt
+        }
+      }
+      // Feder: Spitze haengt hinterher (Traegheit), schwingt zurueck
+      ph.v.addScaledVector(ph.d, -K * dt).addScaledVector(ph.v, -C * dt).addScaledVector(acc, -0.7 * dt);
+      ph.d.addScaledVector(ph.v, dt);
+      if (ph.d.length() > ph.R * 0.5) ph.d.setLength(ph.R * 0.5);
+      // Vertices verformen
+      const dl = ph.d.clone().applyQuaternion(qi);
+      const pos = m.geometry.attributes.position, B = ph.base, v = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i++) {
+        v.set(B[i * 3], B[i * 3 + 1], B[i * 3 + 2]);
+        const t = Math.max(0, Math.min(1, v.z / ph.D));
+        v.addScaledVector(dl, Math.pow(t, 1.5));
+        for (const fl of touch) {
+          const dv = v.clone().sub(fl), dd = dv.length();
+          if (dd < 0.035 && dd > 1e-5) v.addScaledVector(dv, (0.035 - dd) * 0.9 / dd);   // Delle um den Finger
+        }
+        pos.setXYZ(i, v.x, v.y, v.z);
+      }
+      pos.needsUpdate = true;
+      m.geometry.computeVertexNormals();
+    }
+  }
+
   update(ctx) {
+    const now = performance.now(), dt = Math.min(1 / 30, Math.max(1 / 120, ((now - (this._t || now)) / 1000) || 1 / 72));
+    this._t = now;
     for (const c of this.cubes) {
+      if (c.breasts) {
+        const b = this.tracker.skel.boneMap.torso;
+        c.mesh.matrix.multiplyMatrices(b.m, this._breastRel());
+        c.mesh.matrixWorld.copy(c.mesh.matrix);
+        this._breastPhysics(c.mesh, ctx.fingers || [], dt);
+        continue;
+      }
       if (c.mode === 'held' && c.by) c.mesh.matrix.multiplyMatrices(c.by.matrixWorld, c.rel);
       else if (c.mode === 'anchor') {
         const a = ctx.anchors.get(c.key);

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { bodyDims } from '/skeleton.js';
 
 const KEY = 'anja-body';
-const W = 768, H = 560;
+const W = 768, H = 670;
 const ROWS = [
   ['height', 'Größe', 120, 220],
   ['hip', 'Hüfte (Gelenk, Leiste)', 50, 125],
@@ -20,8 +20,9 @@ export function loadProfile() {
 function saveProfile(p) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* egal */ } }
 
 export class MeasurePanel {
-  constructor(scene, { onChange, eyeHeight }) {
+  constructor(scene, { onChange, eyeHeight, onLegCal, onLegOff }) {
     this.scene = scene; this.onChange = onChange; this.eyeHeight = eyeHeight;
+    this.onLegCal = onLegCal; this.onLegOff = onLegOff;
     this.profile = loadProfile();
     this.hover = null; this.note = '';
     this.c = document.createElement('canvas'); this.c.width = W; this.c.height = H;
@@ -83,7 +84,8 @@ export class MeasurePanel {
         if (x >= x0 && x < x0 + 100) return `${ROWS[i][0]}:${STEPS[j]}`;
       }
     }
-    if (y >= 430 && y < 540) return ['measure', 'auto', 'done'][Math.min(2, Math.floor((x - 16) / 246))] || null;
+    if (y >= 430 && y < 530) return ['measure', 'auto', 'done'][Math.min(2, Math.floor((x - 16) / 246))] || null;
+    if (y >= 550 && y < 650) return x < 508 ? 'legcal' : 'legoff';
     return null;
   }
 
@@ -94,6 +96,8 @@ export class MeasurePanel {
     if (!a) return;
     const p = this.profile;
     if (a === 'done') { this.hide(); return; }
+    if (a === 'legcal') { this.onLegCal?.(); return; }
+    if (a === 'legoff') { this.onLegOff?.(); return; }
     if (a === 'auto') { delete p.hip; delete p.knee; this.note = 'Hüfte und Knie aus der Größe geschätzt'; this._rise('hip'); this._rise('knee'); }
     else if (a === 'measure') {
       const eye = this.eyeHeight();
@@ -168,6 +172,13 @@ export class MeasurePanel {
       ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x0, 430, 236, 100, 26) : ctx.rect(x0, 430, 236, 100); ctx.fill();
       ctx.fillStyle = on ? '#1f1638' : '#f1edf9'; ctx.font = '600 25px system-ui, sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(label, x0 + 118, 480);
+    });
+    [['legcal', 'Controller an Schienbeine (10 s)', 16, 482], ['legoff', 'Controller-Beine aus', 508, 244]].forEach(([id, label, x0, w]) => {
+      const on = this.hover === id;
+      ctx.fillStyle = on ? 'rgba(182,156,255,0.92)' : 'rgba(255,255,255,0.08)';
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x0, 550, w, 100, 26) : ctx.rect(x0, 550, w, 100); ctx.fill();
+      ctx.fillStyle = on ? '#1f1638' : '#f1edf9'; ctx.font = '600 23px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(label, x0 + w / 2, 600);
     });
     this.tex.needsUpdate = true;
   }

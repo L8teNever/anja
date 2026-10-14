@@ -52,7 +52,10 @@ export class MixedReality {
     this.cubes = new BodyCubes(this.scene, this.legs);
     // Koerpermasse (Groesse, Huefte, Knie) -> Knochenlaengen
     this.legs.skel.setProfile(loadProfile());
+    this.legMode = 'off';
     this.measure = new MeasurePanel(this.scene, {
+      onLegCal: () => this.startLegCalib(),
+      onLegOff: () => this.stopLegCalib(),
       onChange: (p) => this.legs.skel.setProfile(p),
       eyeHeight: () => new THREE.Vector3().setFromMatrixPosition(this.renderer.xr.getCamera().matrixWorld).y - this.legs.floorY,
     });
@@ -78,6 +81,7 @@ export class MixedReality {
       c.addEventListener('connected', (e) => { c.userData.mode = e.data.targetRayMode; c.userData.src = e.data; });
       c.addEventListener('disconnected', () => { this.cubes.release(c, this.ctx, null); c.userData.mode = null; });
       c.addEventListener('selectstart', () => {
+        if (this._legCtrl(c)) { c.userData.grabbing = true; return; }   // Controller am Bein: keine Klicks
         const cube = this.phone ? null : this.cubes.pick(c);
         c.userData.grabbing = !!cube;
         if (cube) this.cubes.grab(c, cube);
@@ -211,6 +215,11 @@ export class MixedReality {
     // Tiefensensor: alle Bildpunkte, die zu deinem Koerper gehoeren
     const was = this.depthOk;
     const pts = this._handPoints(frame, cam);
+    this._legCalib();
+    if (this.legMode === 'on') this.wrists.legs = this.legMats;
+    // Finger als Beruehrungspunkte (Brust-Physik)
+    this.ctx.fingers = [];
+    for (const caps of [this.handCaps.l, this.handCaps.r]) if (caps && caps.length > 1) for (const cp of caps) this.ctx.fingers.push(cp.b);
     this.legs.update(frame, t, pts, this.wrists || {}, this.handCaps || {});
     this._drawSkeleton();
     this.depthOk = this.legs.ok;
@@ -250,7 +259,7 @@ export class MixedReality {
   _handPoints(frame, cam) {
     const out = [], ref = this.renderer.xr.getReferenceSpace();
     const anchors = this.ctx.anchors;
-    this.wrists = {}; this.handCaps = {};
+    this.wrists = {}; this.handCaps = {}; this.legMats = {};
     if (!frame || !ref) return out;
     const V = (p) => new THREE.Vector3(p.x, p.y, p.z);
     for (const src of frame.session.inputSources) {
@@ -281,7 +290,10 @@ export class MixedReality {
         }
       } else if (src.gripSpace) {
         const p = frame.getPose(src.gripSpace, ref);
-        if (p) {
+        if (p && this.legMode !== 'off') {
+          // Controller haengt am Schienbein -> Bein-Tracker, nicht Hand
+          this.legMats[src.handedness === 'left' ? 'l' : 'r'] = new THREE.Matrix4().fromArray(p.transform.matrix);
+        } else if (p) {
           out.push({ pos: p.transform.position, r: 0.11, hand: true });
           anchors.set(key, { m: new THREE.Matrix4().fromArray(p.transform.matrix), pts: [V(p.transform.position)], r: 0.1 });
           this.wrists[src.handedness === 'left' ? 'l' : 'r'] = V(p.transform.position);
@@ -299,6 +311,28 @@ export class MixedReality {
       }
     } catch { /* nicht unterstuetzt */ }
     return out;
+  }
+
+  _legCtrl(c) { return this.legMode !== 'off' && c.userData.src && !c.userData.src.hand; }
+
+  // Controller an den Schienbeinen: 10 s Zeit zum Anlegen, dann gerade stehen -> kalibrieren
+  startLegCalib() { this.legMode = 'wait'; this._legT0 = performance.now(); this._legSec = -1; }
+  stopLegCalib() { this.legMode = 'off'; this.legs.skel.clearLegCtrl(); this.measure.note = 'Controller-Beine aus'; this.measure.draw(); }
+  _legCalib() {
+    if (this.legMode !== 'wait') return;
+    const left = Math.ceil(10 - (performance.now() - this._legT0) / 1000);
+    if (left > 0) {
+      if (left !== this._legSec) {
+        this._legSec = left;
+        this.measure.note = `Controller vorne unters Knie, gerade hinstellen … ${left}`;
+        this.measure.draw();
+      }
+      return;
+    }
+    const n = this.legs.skel.calibrateLegs(this.legMats);
+    this.legMode = n ? 'on' : 'off';
+    this.measure.note = n ? `${n} Bein${n > 1 ? 'e' : ''} per Controller verbunden` : 'Kein Controller gefunden';
+    this.measure.draw();
   }
 
   _drawSkeleton() {

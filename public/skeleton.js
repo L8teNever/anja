@@ -64,6 +64,8 @@ export class Skeleton {
     this.swivel = { L: 0, R: 0 };        // Ellbogen-Drehung um die Schulter-Hand-Achse (rad)
     this.ik = { L: null, R: null };
     this.armFromWrist = { L: false, R: false };
+    this.legCtrl = { L: null, R: null };   // Controller -> Schienbein (nach Kalibrierung)
+    this.legByCtrl = { L: false, R: false };
     this.def = { l: null, r: null };
     this._B = new THREE.Matrix4(); this._Bi = new THREE.Matrix4();
   }
@@ -178,10 +180,37 @@ export class Skeleton {
       to.sub(an).setLength(FOOT).add(an);
       if (an.y < floorY + 0.06) an.y = floorY + 0.06;
       if (to.y < floorY + 0.03) to.y = floorY + 0.03;
+      // Controller am Schienbein (kalibriert): Knie, Knoechel und Fuss direkt aus dem Controller
+      const lc = this.legCtrl[s], cm = wrists.legs?.[key];
+      this.legByCtrl[s] = !!(lc && cm);
+      if (this.legByCtrl[s]) {
+        const M = cm.clone().multiply(lc);
+        kn.setFromMatrixPosition(M);
+        an.copy(kn).addScaledVector(new THREE.Vector3(0, 1, 0).transformDirection(M), shin);
+        to.copy(an).addScaledVector(new THREE.Vector3(0, 0, 1).transformDirection(M), FOOT);
+      }
     }
     this._bones();
     this.ready = true;
   }
+
+  // Controller an den Schienbeinen kalibrieren: du stehst gerade, Beine senkrecht.
+  // ctrl: {l: Matrix4, r: Matrix4} (Controller-Pose). Gibt die Anzahl kalibrierter Beine zurueck.
+  calibrateLegs(ctrl) {
+    let n = 0;
+    for (const s of ['L', 'R']) {
+      const m = ctrl[s.toLowerCase()];
+      if (!m) { this.legCtrl[s] = null; continue; }
+      const kn = this.j['hip' + s].clone().addScaledVector(DOWN, this.dim.thigh);
+      const z = new THREE.Vector3().crossVectors(this.side, DOWN);
+      const shinM = new THREE.Matrix4().makeBasis(this.side, DOWN, z).setPosition(kn);
+      this.legCtrl[s] = m.clone().invert().multiply(shinM);
+      n++;
+    }
+    return n;
+  }
+
+  clearLegCtrl() { this.legCtrl = { L: null, R: null }; }
 
   setProfile(p) { this.dim = bodyDims(p); this.leg = { l: null, r: null }; }
 
@@ -318,6 +347,7 @@ export class Skeleton {
     };
     for (const s of ['L', 'R']) {
       const sg = s === 'L' ? -1 : 1, S = this.side, key = s === 'L' ? 'l' : 'r';
+      if (this.legByCtrl[s]) continue;
       const ok = (x, y, z) => {
         const lx = (x - P.x) * S.x + (y - P.y) * S.y + (z - P.z) * S.z;
         const ly = -((x - P.x) * T.x + (y - P.y) * T.y + (z - P.z) * T.z);

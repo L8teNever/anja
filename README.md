@@ -153,8 +153,12 @@ stehend, sitzend und liegend.
   hinstellen, geradeaus schauen). Daraus werden alle Knochenlängen berechnet (Arme, Rumpf, Ober-/Unterschenkel).
   Während das Menü offen ist, fahren Ringe vom Boden auf Hüft- und Knie-Höhe – zum Prüfen an dir selbst.
   Der Ellbogen folgt der Unterarm-Richtung aus dem Hand-Tracking.
-- **Brust** (Knopf „Brust“): 3D-Brüste am Oberkörper, Größe S/M/L/aus. Sie haften am Rumpf-Knochen und lassen
-  sich greifen und verschieben.
+- **Brust** (Knopf „Brust“): 3D-Brüste am Oberkörper, Größe S/M/L/aus, Höhe aus der Körpergröße. Mit Physik:
+  wackeln bei Bewegung/Springen (Feder-Dämpfer), geben nach und bekommen Dellen, wenn die Finger sie berühren.
+  Nicht greifbar.
+- **Controller an den Schienbeinen** (im Menü „Maße“): Knopf drücken, 10 s Zeit, Controller vorne unters Knie
+  befestigen und gerade hinstellen – dann folgen Knie, Knöchel und Fuß direkt den Controllern. Hände bleiben
+  per Hand-Tracking, sofern die Brille Hände und Controller gleichzeitig erlaubt.
 - Unten im Blickfeld: „Beenden“, „Blau: stark/leicht/aus“, „Würfel“, „Alle weg“, „Skelett“, „Brust“, „Maße“, darüber der Status.
 
 ## Raum-Modus (Durchsicht ohne Video)

@@ -41,8 +41,13 @@ export class MixedReality {
     this.scene.add(this.est);
 
     this.cubes = new BodyCubes(this.scene, this.legs);
-    this.ctx = { anchors: new Map(), body: null };
-    this._bodyM = new THREE.Matrix4();
+    this.ctx = { anchors: new Map() };
+    // Skelett sichtbar machen (Knopf "Skelett")
+    this.skelLines = new THREE.LineSegments(new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false }));
+    this.skelLines.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.legs.skel.bones.length * 6), 3));
+    this.skelLines.frustumCulled = false; this.skelLines.renderOrder = 26; this.skelLines.visible = false;
+    this.scene.add(this.skelLines);
 
     // kleiner Griff "Beenden | Blau | Wuerfel | Weg" unten im Blickfeld (Brille)
     this.hc = document.createElement('canvas'); this.hc.width = 640; this.hc.height = 150;
@@ -121,11 +126,12 @@ export class MixedReality {
     this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(m);
     const h = this.raycaster.intersectObject(this.handle, false)[0];
     if (!h) return;
-    const k = Math.min(3, Math.floor(h.uv.x * 4));
+    const k = Math.min(4, Math.floor(h.uv.x * 5));
     if (k === 0) this.end();
     else if (k === 1) this.toggleBlue();
     else if (k === 2) this.cubes.spawn(this.renderer.xr.getCamera());
-    else this.cubes.clear();
+    else if (k === 3) this.cubes.clear();
+    else { this.showSkel = !this.showSkel; this._drawHandle(); }
   }
 
   _drawHandle() {
@@ -137,9 +143,10 @@ export class MixedReality {
     ctx.beginPath(); ctx.roundRect ? ctx.roundRect((W - tw) / 2, 2, tw, 36, 18) : ctx.rect((W - tw) / 2, 2, tw, 36); ctx.fill();
     ctx.fillStyle = '#f1edf9'; ctx.fillText(t, W / 2, 20);
     const lbl = this.strength > 0.5 ? 'Blau: stark' : this.strength > 0.2 ? 'Blau: leicht' : 'Blau: aus';
-    const bw = W / 4;
-    [['exit', 'close', 'Beenden'], ['blue', 'pan_tool', lbl], ['cube', 'add_box', 'Würfel'], ['clear', 'delete_sweep', 'Alle weg']].forEach(([id, ic, label], k) => {
-      const on = this.hover === id, x0 = k * bw;
+    const bw = W / 5;
+    [['exit', 'close', 'Beenden'], ['blue', 'pan_tool', lbl], ['cube', 'add_box', 'Würfel'], ['clear', 'delete_sweep', 'Alle weg'],
+      ['skel', 'accessibility_new', this.showSkel ? 'Skelett an' : 'Skelett']].forEach(([id, ic, label], k) => {
+      const on = this.hover === id || (id === 'skel' && this.showSkel), x0 = k * bw;
       ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x0 + 4, 46, bw - 8, 98, 30) : ctx.rect(x0 + 4, 46, bw - 8, 98);
       ctx.fillStyle = on ? 'rgba(182,156,255,0.92)' : 'rgba(22,19,31,0.85)'; ctx.fill();
       ctx.save(); ctx.translate(x0 + bw / 2 - 18, 52); ctx.scale(36 / 24, 36 / 24); ctx.fillStyle = on ? '#1f1638' : '#f1edf9';
@@ -178,7 +185,8 @@ export class MixedReality {
     // Tiefensensor: alle Bildpunkte, die zu deinem Koerper gehoeren
     const was = this.depthOk;
     const pts = this._handPoints(frame, cam);
-    this.legs.update(frame, t, pts);
+    this.legs.update(frame, t, pts, this.wrists || {});
+    this._drawSkeleton();
     this.depthOk = this.legs.ok;
     this.cubes.update(this.ctx);
     // sonst: geschaetzte Beine unter dem Kopf, mit dem Blick (weich) gedreht
@@ -202,7 +210,7 @@ export class MixedReality {
       this.raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
       this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(m);
       const h = this.raycaster.intersectObject(this.handle, false)[0];
-      if (h) hov = ['exit', 'blue', 'cube', 'clear'][Math.min(3, Math.floor(h.uv.x * 4))];
+      if (h) hov = ['exit', 'blue', 'cube', 'clear', 'skel'][Math.min(4, Math.floor(h.uv.x * 5))];
     }
     if (hov !== this.hover) { this.hover = hov; this._drawHandle(); }
     this.renderer.render(this.scene, this.camera);
@@ -213,6 +221,7 @@ export class MixedReality {
   _handPoints(frame, cam) {
     const out = [], ref = this.renderer.xr.getReferenceSpace();
     const anchors = this.ctx.anchors;
+    this.wrists = {};
     if (!frame || !ref) return out;
     const V = (p) => new THREE.Vector3(p.x, p.y, p.z);
     for (const src of frame.session.inputSources) {
@@ -229,12 +238,14 @@ export class MixedReality {
           // Unterarm: vom Handgelenk entlang +Z (Richtung Ellbogen)
           for (const d of [0.1, 0.2]) pts.push(new THREE.Vector3(0, 0, d).applyMatrix4(m));
           anchors.set(key, { m, pts, r: 0.07 });
+          this.wrists[src.handedness === 'left' ? 'l' : 'r'] = new THREE.Vector3().setFromMatrixPosition(m);
         }
       } else if (src.gripSpace) {
         const p = frame.getPose(src.gripSpace, ref);
         if (p) {
           out.push({ pos: p.transform.position, r: 0.11, hand: true });
           anchors.set(key, { m: new THREE.Matrix4().fromArray(p.transform.matrix), pts: [V(p.transform.position)], r: 0.1 });
+          this.wrists[src.handedness === 'left' ? 'l' : 'r'] = V(p.transform.position);
         }
       }
     }
@@ -247,21 +258,15 @@ export class MixedReality {
         anchors.set('joint-' + name, { m: new THREE.Matrix4().fromArray(p.transform.matrix), pts: [V(p.transform.position)], r: 0.07 });
       }
     } catch { /* nicht unterstuetzt */ }
-    // Koerper-Bezug: Nacken (unter/hinter den Augen), gedreht mit der Koerperrichtung (traege)
-    const q = new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld);
-    const head = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
-    const hx = fwd.x + up.x * Math.max(0, -fwd.y), hz = fwd.z + up.z * Math.max(0, -fwd.y);
-    if (hx * hx + hz * hz > 1e-4) {
-      const yaw = Math.atan2(hx, hz);
-      if (this._bodyYaw === undefined) this._bodyYaw = yaw;
-      const d = Math.atan2(Math.sin(yaw - this._bodyYaw), Math.cos(yaw - this._bodyYaw));
-      if (Math.abs(d) > 0.6) this._bodyYaw += (d - Math.sign(d) * 0.6) * 0.2;
-    }
-    const neck = head.clone().add(new THREE.Vector3(0, -0.12, 0.09).applyQuaternion(q));
-    this._bodyM.makeRotationY(this._bodyYaw || 0).setPosition(neck);
-    this.ctx.body = this._bodyM;
     return out;
+  }
+
+  _drawSkeleton() {
+    this.skelLines.visible = !!this.showSkel && this.legs.skel.ready;
+    if (!this.skelLines.visible) return;
+    const a = this.skelLines.geometry.attributes.position;
+    this.legs.skel.bones.forEach((b, i) => { a.setXYZ(i * 2, b.a.x, b.a.y, b.a.z); a.setXYZ(i * 2 + 1, b.b.x, b.b.y, b.b.z); });
+    a.needsUpdate = true;
   }
 
   dispose() {

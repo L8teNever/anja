@@ -2,8 +2,7 @@
 // Beim Loslassen haftet er an dem, was er beruehrt:
 //   - Hand/Controller (auch Unterarm nah am Handgelenk): bewegt sich exakt mit der Hand.
 //   - Koerper-Gelenk (falls die Brille Body-Tracking liefert): exakt mit dem Gelenk.
-//   - Koerper laut Tiefensensor (Bein, Bauch, Brust, Arm): haftet am Koerper (Bezug: Nacken + Blickrichtung
-//     des Koerpers) und wird bei jedem Blick auf die Stelle wieder an die echte Oberflaeche gezogen.
+//   - Knochen des Skeletts (Oberschenkel, Schienbein, Fuss, Arm, Brust, Becken): bewegt sich mit dem Knochen.
 //   - sonst: bleibt im Raum stehen.
 import * as THREE from 'three';
 
@@ -79,13 +78,9 @@ export class BodyCubes {
         for (const q of a.pts) { const d = p.distanceTo(q) - a.r; if (d < 0 && d < bd) { bd = d; best = key; } }
       }
       if (best) { this._attach(c, 'anchor', best, ctx.anchors.get(best).m); continue; }
-      // 2. Koerper laut Tiefensensor
-      const q = this.tracker.ok ? this.tracker.nearest(p, 0.14) : null;
-      if (q && ctx.body) {
-        this._attach(c, 'body', null, ctx.body);
-        c.dist = p.distanceTo(q); c.seg = this.tracker.segId;
-        continue;
-      }
+      // 2. Knochen des Skeletts (Bein, Arm, Brust, Becken)
+      const bone = this.tracker.ok ? this.tracker.skel.nearestBone(p, 0.07) : null;
+      if (bone) { this._attach(c, 'bone', bone.name, bone.m); continue; }
       c.mode = 'world';
     }
   }
@@ -96,27 +91,14 @@ export class BodyCubes {
   }
 
   update(ctx) {
-    const tmp = this._m;
     for (const c of this.cubes) {
       if (c.mode === 'held' && c.by) c.mesh.matrix.multiplyMatrices(c.by.matrixWorld, c.rel);
       else if (c.mode === 'anchor') {
         const a = ctx.anchors.get(c.key);
         if (a) c.mesh.matrix.multiplyMatrices(a.m, c.rel);     // Hand nicht sichtbar: bleibt, wo sie zuletzt war
-      } else if (c.mode === 'body' && ctx.body) {
-        c.mesh.matrix.multiplyMatrices(ctx.body, c.rel);
-        // an die echte Koerperoberflaeche nachziehen, sobald die Stelle wieder gesehen wird
-        if (this.tracker.ok && this.tracker.segId !== c.seg) {
-          c.seg = this.tracker.segId;
-          const p = new THREE.Vector3().setFromMatrixPosition(c.mesh.matrix);
-          const q = this.tracker.nearest(p, 0.2);
-          if (q) {
-            const dir = p.clone().sub(q); const d = dir.length();
-            const target = d > 1e-4 ? q.clone().addScaledVector(dir.divideScalar(d), c.dist) : p;
-            p.lerp(target, 0.4);
-            c.mesh.matrix.setPosition(p);
-            c.rel.copy(tmp.copy(ctx.body).invert().multiply(c.mesh.matrix));
-          }
-        }
+      } else if (c.mode === 'bone') {
+        const b = this.tracker.skel.boneMap[c.key];
+        if (b) c.mesh.matrix.multiplyMatrices(b.m, c.rel);
       }
       c.mesh.matrixWorld.copy(c.mesh.matrix);
     }

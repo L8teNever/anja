@@ -1,5 +1,6 @@
 // Koerper-Erkennung ueber den Tiefensensor (WebXR depth-sensing, z. B. Quest 3) – stehend, sitzend, liegend.
 // 1. Jeder Bildpunkt -> echte Raumposition (Sensor-Angaben je Auge: Nah/Fern bzw. Meter-Faktor, Ausrichtung).
+// Skelett (skeleton.js): nur Punkte in einem Knochen (Kapsel) koennen zu dir gehoeren; Beine werden eingepasst.
 // 2. Mehrmals pro Sekunde ein kleines Tiefenbild (Auge links) auf der CPU auswerten:
 //    - Auflageflaechen finden (Boden, Bett, Sitzflaeche, Tisch): grosse waagrechte Flaechen gleicher Hoehe.
 //    - Startpunkte auf deinem Koerper: Haende/Controller, Koerper-Gelenke (falls die Brille Body-Tracking
@@ -10,6 +11,7 @@
 //    damit sie bei Kopfbewegung nicht hinterherhaengt). Haende werden zusaetzlich direkt aus dem
 //    Hand-Tracking eingefaerbt. Die Maske ist spaeter auch fuer Kleidung gedacht.
 import * as THREE from 'three';
+import { Skeleton, BONES } from '/skeleton.js';
 
 const W = 96, H = 72;            // Aufloesung der Auswertung
 const MAX_PLANES = 4;
@@ -60,6 +62,17 @@ uniform vec4 planes[${MAX_PLANES}];   // Auflageflaechen: Hoehe (x), aktiv (y)
 uniform vec4 hands[16];              // Kugeln um Haende/Controller (xyz, r)
 uniform vec3 head, color;
 uniform float strength, time;
+uniform vec4 capA[${BONES.length}];   // Skelett-Knochen: Start (xyz) + Radius
+uniform vec3 capB[${BONES.length}];   // Ende
+float capDist(vec3 p) {
+  float best = 1e3;
+  for (int i = 0; i < ${BONES.length}; i++) {
+    vec3 a = capA[i].xyz, ab = capB[i] - a;
+    float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+    best = min(best, length(p - a - ab * t) - capA[i].w);
+  }
+  return best;
+}
 void main() {
   int e = gl_FragCoord.x >= vpSize.x ? 1 : 0;
   vec2 uv = vec2(gl_FragCoord.x - float(e) * vpSize.x, gl_FragCoord.y) / vpSize;
@@ -76,7 +89,8 @@ void main() {
     if (!support && distance(w.xyz, head) < 2.3) {
       vec4 c = maskVP * vec4(w.xyz, 1.0);
       vec2 m = c.xy / c.w * 0.5 + 0.5;
-      if (c.w > 0.0 && m.x > 0.0 && m.x < 1.0 && m.y > 0.0 && m.y < 1.0) k = max(k, smoothstep(0.35, 0.65, texture(bodyMask, m).r));
+      float inSkel = smoothstep(0.06, 0.03, capDist(w.xyz));   // nur was anatomisch zu dir passt
+      if (inSkel > 0.0 && c.w > 0.0 && m.x > 0.0 && m.x < 1.0 && m.y > 0.0 && m.y < 1.0) k = max(k, smoothstep(0.35, 0.65, texture(bodyMask, m).r) * inSkel);
     }
   }
   if (k < 0.01) discard;
@@ -100,6 +114,7 @@ export class BodyTracker {
       floorY: { value: 0 }, planes: { value: Array.from({ length: MAX_PLANES }, () => new THREE.Vector4()) },
       hands: { value: Array.from({ length: 16 }, () => new THREE.Vector4()) },
       head: { value: new THREE.Vector3() },
+      capA: { value: BONES.map(() => new THREE.Vector4()) }, capB: { value: BONES.map(() => new THREE.Vector3()) },
       color: { value: new THREE.Color(0x3d8bff) }, strength: { value: 1 }, time: { value: 0 },
     };
     this.maskData = new Uint8Array(W * H);
@@ -126,10 +141,11 @@ export class BodyTracker {
     this.n = 0;
     this.grabFail = false;
     this.pts = new Float32Array(W * H * 3); this.npts = 0; this.segId = 0;
+    this.skel = new Skeleton();
   }
 
-  // pro XR-Frame; points: Liste von {pos, r} (Haende/Controller/Koerper-Gelenke)
-  update(frame, t, points = []) {
+  // pro XR-Frame; points: Liste von {pos, r} (Haende/Controller/Koerper-Gelenke); wrists: {l, r}
+  update(frame, t, points = [], wrists = {}) {
     const r = this.renderer, xr = r.xr, session = xr.getSession();
     const tex = xr.getDepthTexture?.();
     this.ok = false;
@@ -160,6 +176,9 @@ export class BodyTracker {
     u.vpSize.value.set(cam.cameras[0].viewport.z, cam.cameras[0].viewport.w);
     const head = u.head.value.setFromMatrixPosition(cam.matrixWorld);
     u.time.value = t / 1000;
+    // Skelett nachfuehren (Kopf + Haende jedes Frame, Beine aus der letzten Auswertung)
+    this.skel.predict(head, new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld), wrists, this.floorY);
+    this.skel.bones.forEach((b, i) => { u.capA.value[i].set(b.a.x, b.a.y, b.a.z, b.r); u.capB.value[i].copy(b.b); });
     // nur die echten Hand-Punkte direkt einfaerben, Gelenke dienen als Startpunkte
     const handPts = points.filter((p) => p.hand);
     u.hands.value.forEach((h, i) => { const p = handPts[i]; if (p) h.set(p.pos.x, p.pos.y, p.pos.z, p.r); else h.set(0, 0, 0, 0); });
@@ -248,13 +267,14 @@ export class BodyTracker {
       const dh = Math.hypot(px - hx, py - hy, pz - hz);
       if (dh > 2.3) { lab[i] = 2; continue; }
       if (support(i)) { lab[i] = 2; continue; }
-      let seed = false;
-      for (const p of points) {
+      // nur in der Naehe des Skeletts kann etwas zu dir gehoeren
+      const sd = this.skel.dist(px, py, pz);
+      if (sd > 0.16) { lab[i] = 2; continue; }
+      let seed = sd < -0.02;
+      if (!seed) for (const p of points) {
         const dx = px - p.pos.x, dy = py - p.pos.y, dz = pz - p.pos.z;
         if (dx * dx + dy * dy + dz * dz < p.r * p.r) { seed = true; break; }
       }
-      // Brust/Bauch: nah unter dem Kinn, unteres Bilddrittel
-      if (!seed && y < H * 0.4 && dh > 0.15 && dh < 0.6 && py < hy - 0.05) seed = true;
       if (seed) { lab[i] = 1; q[qt++] = i; }
     }
     // Wachsen ueber zusammenhaengende Tiefe
@@ -270,6 +290,14 @@ export class BodyTracker {
         lab[j] = 1; q[qt++] = j;
       }
     }
+    // Beine ins Skelett einpassen (nur Punkte nahe den Beinknochen)
+    let nc = 0;
+    for (let i = 0; i < N; i++) if (lab[i] === 1 && this.skel.dist(P(i, 0), P(i, 1), P(i, 2), true) < 0.16) {
+      this.pts[nc * 3] = P(i, 0); this.pts[nc * 3 + 1] = P(i, 1); this.pts[nc * 3 + 2] = P(i, 2); nc++;
+    }
+    this.skel.fit(this.pts, nc);
+    // endgueltig: nur was in einem Knochen liegt
+    for (let i = 0; i < N; i++) if (lab[i] === 1 && this.skel.dist(P(i, 0), P(i, 1), P(i, 2)) > 0.05) lab[i] = 2;
     // erkannte Koerperpunkte (Welt) fuer angeheftete Objekte
     let np = 0;
     for (let i = 0; i < N; i++) if (lab[i] === 1) { this.pts[np * 3] = P(i, 0); this.pts[np * 3 + 1] = P(i, 1); this.pts[np * 3 + 2] = P(i, 2); np++; }

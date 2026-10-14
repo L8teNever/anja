@@ -3,7 +3,6 @@ name: Docker-Image bauen
 on:
   push:
     branches: [main]
-    paths-ignore: ['lara/**', '.github/workflows/lara.yml']   # Lara hat ein eigenes Image
   workflow_dispatch:
 
 permissions:

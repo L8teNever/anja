@@ -1,7 +1,0 @@
-services:
-  lara:
-    image: ghcr.io/l8tenever/lara-bowling:latest
-    container_name: lara-bowling
-    restart: unless-stopped
-    ports:
-      - "8081:80"          # http://localhost:8081 – fuer die Brille HTTPS davor (z. B. Cloudflare-Tunnel)

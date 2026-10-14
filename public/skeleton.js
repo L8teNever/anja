@@ -47,6 +47,7 @@ export class Skeleton {
     this.lean = 0;                       // Vor-/Zuruecklehnen (rad)
     this.swivel = { L: 0, R: 0 };        // Ellbogen-Drehung um die Schulter-Hand-Achse (rad)
     this.ik = { L: null, R: null };
+    this.def = { l: null, r: null };
     this._B = new THREE.Matrix4(); this._Bi = new THREE.Matrix4();
   }
 
@@ -135,10 +136,8 @@ export class Skeleton {
     if (posture !== this.posture) { this.posture = posture; this.leg = { l: null, r: null }; }
     for (const s of ['L', 'R']) {
       const hip = J['hip' + s], kn = J['kn' + s], an = J['an' + s], to = J['to' + s];
-      const fit = this.leg[s === 'L' ? 'l' : 'r'];
-      if (fit) {
-        kn.copy(fit.kn).applyMatrix4(this._B); an.copy(fit.an).applyMatrix4(this._B); to.copy(fit.to).applyMatrix4(this._B);
-      } else if (this.lying) {
+      // Grundhaltung je nach Haltung
+      if (this.lying) {
         kn.copy(hip).addScaledVector(T, thigh); an.copy(kn).addScaledVector(T, shin); to.copy(an).addScaledVector(this.fwd, FOOT);
       } else if (standing) {
         kn.copy(hip).addScaledVector(DOWN, thigh); an.copy(kn).addScaledVector(DOWN, shin); to.copy(an).addScaledVector(yawFwd, FOOT);
@@ -147,6 +146,11 @@ export class Skeleton {
       } else {
         kn.copy(hip).addScaledVector(yawFwd, thigh); an.copy(kn).addScaledVector(DOWN, shin); to.copy(an).addScaledVector(yawFwd, FOOT);
       }
+      const key = s === 'L' ? 'l' : 'r';
+      // Grundhaltung als Richtungen im Becken-Bezug merken (Ziel, wenn nichts gesehen wird)
+      this.def[key] = this._toDirs(hip, kn, an, to);
+      const fit = this.leg[key];
+      if (fit) this._fromDirs(hip, fit, kn, an, to, thigh, shin);
       // Knochenlaengen und Boden einhalten
       kn.sub(hip).setLength(thigh).add(hip);
       an.sub(kn).setLength(shin).add(kn);
@@ -235,9 +239,50 @@ export class Skeleton {
     else this.lean *= 0.995;          // ohne Hinweise langsam zurueck zur Grundhaltung
   }
 
-  // Beine aus erkannten Punkten einpassen (A: Float32Array xyz, n Punkte)
-  fit(A, n) {
-    const J = this.j, thigh = this.legLen * 0.5, shin = this.legLen * 0.47;
+  // Bein als Knochen-Richtungen im Becken-Bezug (lokal: x = rechts, y = Richtung Kopf, z = Brust)
+  _toDirs(hip, kn, an, to) {
+    const R = new THREE.Matrix3().setFromMatrix4(this._Bi);
+    return {
+      t: kn.clone().sub(hip).applyMatrix3(R).normalize(),
+      s: an.clone().sub(kn).applyMatrix3(R).normalize(),
+      f: to.clone().sub(an).applyMatrix3(R).normalize(),
+    };
+  }
+
+  _fromDirs(hip, d, kn, an, to, thigh, shin) {
+    const R = new THREE.Matrix3().setFromMatrix4(this._B);
+    kn.copy(hip).addScaledVector(d.t.clone().applyMatrix3(R), thigh);
+    an.copy(kn).addScaledVector(d.s.clone().applyMatrix3(R), shin);
+    to.copy(an).addScaledVector(d.f.clone().applyMatrix3(R), FOOT);
+  }
+
+  // was ein Bein anatomisch kann (lokal, sg = -1 links / +1 rechts)
+  _limit(d, sg) {
+    const t = d.t;
+    t.y = Math.min(t.y, 0.3);                    // Oberschenkel nicht Richtung Kopf
+    t.z = Math.max(t.z, -0.4);                   // nicht weit nach hinten
+    const out = Math.max(-0.2, Math.min(0.65, t.x * sg)); t.x = out * sg;   // kaum nach innen, etwas nach aussen
+    t.normalize();
+    const sh = d.s;
+    if (sh.dot(t) < -0.8) sh.lerp(t, 0.5);       // Knie beugt hoechstens ~145 Grad
+    sh.z = Math.min(sh.z, Math.max(t.z, 0) + 0.25);   // Unterschenkel nicht nach vorne ueberstrecken
+    sh.normalize();
+    const f = d.f;
+    if (f.dot(sh) > 0.6) f.lerp(new THREE.Vector3(0, 0, 1), 0.5);   // Fuss steht etwa quer zum Schienbein
+    f.normalize();
+  }
+
+  // Richtung hoechstens um maxA (rad) aendern
+  static _step(old, nu, maxA) {
+    const a = old.angleTo(nu);
+    if (a <= maxA) return nu;
+    return old.clone().lerp(nu, maxA / a).normalize();
+  }
+
+  // Beine aus erkannten Punkten einpassen (A: Float32Array xyz, n Punkte; skip(x,y,z): Haende usw.)
+  fit(A, n, skip = () => false) {
+    const J = this.j, thigh = this.legLen * 0.52, shin = this.legLen * 0.48;
+    const P = J.pelvis, T = this.torsoDir;
     const dirFrom = (o, test, minD, maxD) => {
       const d = new THREE.Vector3(); let c = 0;
       for (let k = 0; k < n; k++) {
@@ -246,25 +291,41 @@ export class Skeleton {
         if (l < minD || l > maxD || !test(x, y, z)) continue;
         d.x += dx / l; d.y += dy / l; d.z += dz / l; c++;
       }
-      return c >= 6 ? d.normalize() : null;
+      return c >= 8 ? d.normalize() : null;
     };
     for (const s of ['L', 'R']) {
-      const sg = s === 'L' ? -1 : 1, P = J.pelvis, S = this.side;
-      const mine = (x, y, z) => ((x - P.x) * S.x + (y - P.y) * S.y + (z - P.z) * S.z) * sg > -0.04;
+      const sg = s === 'L' ? -1 : 1, S = this.side, key = s === 'L' ? 'l' : 'r';
+      const ok = (x, y, z) => {
+        const lx = (x - P.x) * S.x + (y - P.y) * S.y + (z - P.z) * S.z;
+        const ly = -((x - P.x) * T.x + (y - P.y) * T.y + (z - P.z) * T.z);
+        if (lx * sg < -0.04 || ly > 0.05) return false;             // eigene Seite, unterhalb der Huefte
+        for (let i = 3; i <= 6; i++) { const b = this.bones[i]; if (segDist(x, y, z, b.a, b.b) < b.r + 0.04) return false; }  // Arme
+        return !skip(x, y, z);
+      };
       const hip = J['hip' + s], kn = J['kn' + s].clone(), an = J['an' + s].clone(), to = J['to' + s].clone();
-      let seen = false;
-      const dT = dirFrom(hip, (x, y, z) => mine(x, y, z) && segDist(x, y, z, hip, kn) < 0.3, 0.12, thigh + 0.06);
-      if (dT) { kn.copy(hip).addScaledVector(dT, thigh); seen = true; }
-      const dS = dirFrom(kn, (x, y, z) => mine(x, y, z) && segDist(x, y, z, kn, an) < 0.25 && segDist(x, y, z, hip, kn) > 0.06, 0.1, shin + 0.05);
-      if (dS) { an.copy(kn).addScaledVector(dS, shin); seen = true; }
-      const dF = dirFrom(an, (x, y, z) => mine(x, y, z) && segDist(x, y, z, an, to) < 0.2 && segDist(x, y, z, kn, an) > 0.08, 0.05, FOOT + 0.08);
-      if (dF) { to.copy(an).addScaledVector(dF, FOOT); seen = true; }
-      if (!seen) continue;
-      const key = s === 'L' ? 'l' : 'r';
-      const loc = { kn: kn.applyMatrix4(this._Bi), an: an.applyMatrix4(this._Bi), to: to.applyMatrix4(this._Bi) };
-      const old = this.leg[key];
-      if (old) { old.kn.lerp(loc.kn, 0.5); old.an.lerp(loc.an, 0.5); old.to.lerp(loc.to, 0.5); }
-      else this.leg[key] = loc;
+      let seen = 0;
+      const dT = dirFrom(hip, (x, y, z) => ok(x, y, z) && segDist(x, y, z, hip, kn) < 0.22, 0.12, thigh + 0.06);
+      if (dT) { kn.copy(hip).addScaledVector(dT, thigh); seen++; }
+      const dS = dirFrom(kn, (x, y, z) => ok(x, y, z) && segDist(x, y, z, kn, an) < 0.2 && segDist(x, y, z, hip, kn) > 0.06, 0.1, shin + 0.05);
+      if (dS) { an.copy(kn).addScaledVector(dS, shin); seen++; }
+      const dF = dirFrom(an, (x, y, z) => ok(x, y, z) && segDist(x, y, z, an, to) < 0.16 && segDist(x, y, z, kn, an) > 0.08, 0.05, FOOT + 0.06);
+      if (dF) { to.copy(an).addScaledVector(dF, FOOT); seen++; }
+      const def = this.def[key];
+      if (!def) continue;
+      const cur = this.leg[key] || { t: def.t.clone(), s: def.s.clone(), f: def.f.clone() };
+      if (seen) {
+        const nu = this._toDirs(hip, kn, an, to);
+        this._limit(nu, sg);
+        cur.t = Skeleton._step(cur.t, cur.t.clone().lerp(nu.t, 0.5).normalize(), 0.3);
+        cur.s = Skeleton._step(cur.s, cur.s.clone().lerp(nu.s, 0.5).normalize(), 0.35);
+        cur.f = Skeleton._step(cur.f, cur.f.clone().lerp(nu.f, 0.5).normalize(), 0.4);
+        cur.miss = 0;
+      } else if ((cur.miss = (cur.miss || 0) + 1) > 15) {
+        // lange nichts gesehen: langsam zurueck zur Grundhaltung
+        cur.t.lerp(def.t, 0.05).normalize(); cur.s.lerp(def.s, 0.05).normalize(); cur.f.lerp(def.f, 0.05).normalize();
+      }
+      this._limit(cur, sg);
+      this.leg[key] = cur;
     }
   }
 }

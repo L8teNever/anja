@@ -142,14 +142,16 @@ stehend, sitzend und liegend.
 - **Ohne Tiefensensor** (ältere Brillen, Handy): Beine werden aus der Kopfposition geschätzt.
 - **Skelett** (`public/skeleton.js`): Kopf und Hände sind bekannt, daraus Nacken, Schultern, Becken und
   Arme (IK). Die Beine (Knie, Knöchel, Zehen mit festen Knochenlängen, Beinlänge im Stehen gelernt) werden
-  aus dem Tiefensensor eingepasst, ebenso Ellbogen-Stellung und Rumpf-Neigung. Der Unterarm endet genau am
+  aus dem Tiefensensor eingepasst (mit Gelenk-Grenzen: Knie beugt nur nach hinten, kein Wegdriften; ohne Sicht zurück zur Grundhaltung), ebenso Ellbogen-Stellung und Rumpf-Neigung. Der Unterarm endet genau am
   getrackten Handgelenk; Handfläche und Finger sind eigene Knochen direkt aus dem Hand-Tracking.
   Blau wird nur, was in einem Knochen liegt. Knopf „Skelett“ zeigt es an.
 - **Würfel anheften** (`public/mr-cubes.js`): „Würfel“ erzeugt einen Würfel vor dir. Greifen mit
   Pinch/Trigger (nah oder per Strahl), loslassen an Hand, Unterarm, Bein, Bauch oder Brust – er haftet
   dort und bewegt sich mit (Hände/Controller exakt, sonst mit dem Knochen des Skeletts).
   Sonst bleibt er im Raum stehen. „Alle weg“ entfernt alle.
-- Unten im Blickfeld: „Beenden“, „Blau: stark/leicht/aus“, „Würfel“, „Alle weg“, „Skelett“, darüber der Status.
+- **Brust** (Knopf „Brust“): 3D-Brüste am Oberkörper, Größe S/M/L/aus. Sie haften am Rumpf-Knochen und lassen
+  sich greifen und verschieben.
+- Unten im Blickfeld: „Beenden“, „Blau: stark/leicht/aus“, „Würfel“, „Alle weg“, „Skelett“, „Brust“, darüber der Status.
 
 ## Raum-Modus (Durchsicht ohne Video)
 

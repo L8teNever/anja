@@ -41,8 +41,50 @@ export class BodyCubes {
   }
 
   clear() {
-    for (const c of this.cubes) { this.scene.remove(c.mesh); c.mesh.material.dispose(); }
-    this.cubes = [];
+    for (const c of this.cubes) if (!c.breasts) { this.scene.remove(c.mesh); c.mesh.material.dispose(); }
+    this.cubes = this.cubes.filter((c) => c.breasts);
+  }
+
+  // Brueste am Oberkoerper: aus -> klein -> mittel -> gross -> aus. Haften am Rumpf-Knochen,
+  // lassen sich greifen und verschieben (Loslassen haftet wieder am naechsten Knochen).
+  cycleBreasts() {
+    const old = this.cubes.find((c) => c.breasts);
+    const next = old ? (old.size + 1) % 4 : 1;
+    let rel = null;
+    if (old) {
+      rel = old.mode === 'bone' && old.key === 'torso' ? old.rel.clone() : null;
+      this.scene.remove(old.mesh);
+      old.mesh.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+      this.cubes = this.cubes.filter((c) => c !== old);
+    }
+    this.breastSize = next;
+    if (!next) return 0;
+    const R = [0, 0.058, 0.072, 0.088][next], D = R * 0.95;
+    const prof = [];
+    for (let i = 0; i <= 18; i++) { const a = (i / 18) * Math.PI / 2; prof.push(new THREE.Vector2(Math.max(1e-4, R * Math.cos(a)), D * Math.sin(a))); }
+    const geo = new THREE.LatheGeometry(prof, 40).rotateX(Math.PI / 2);   // nach vorne (+z)
+    const pa = geo.attributes.position;
+    for (let i = 0; i < pa.count; i++) {
+      const z = pa.getZ(i), t = z / D;
+      pa.setY(i, pa.getY(i) * (1 - 0.08 * t) + 0.32 * R * t * t);        // leicht haengend (Bone-Bezug: +y = nach unten)
+    }
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({ color: 0xe9b99b, roughness: 0.55, metalness: 0, transparent: true });
+    const g = new THREE.Group();
+    for (const sx of [-1, 1]) {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(sx * (0.07 + R * 0.45), 0, 0); m.rotation.y = sx * 0.18;
+      m.renderOrder = 25;
+      g.add(m);
+    }
+    g.matrixAutoUpdate = false;
+    this.scene.add(g);
+    // Rumpf-Knochen: Ursprung oben an der Brust, y nach unten, z nach vorne
+    const c = { mesh: g, mode: 'bone', key: 'torso', rel: rel || new THREE.Matrix4().makeTranslation(0, 0.2, 0.09), by: null, breasts: true, size: next };
+    const b = this.tracker.skel.boneMap.torso;
+    g.matrix.multiplyMatrices(b.m, c.rel); g.matrixWorld.copy(g.matrix);
+    this.cubes.push(c);
+    return next;
   }
 
   // Wuerfel an dieser Hand/diesem Controller (nah) oder auf dem Strahl
@@ -56,8 +98,11 @@ export class BodyCubes {
     if (best) return best;
     this.raycaster.ray.origin.copy(o);
     this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(new THREE.Matrix4().extractRotation(ctrl.matrixWorld));
-    const hit = this.raycaster.intersectObjects(this.cubes.map((c) => c.mesh), false)[0];
-    return hit ? this.cubes.find((c) => c.mesh === hit.object) : null;
+    const hit = this.raycaster.intersectObjects(this.cubes.map((c) => c.mesh), true)[0];
+    if (!hit) return null;
+    let h = hit.object;
+    while (h && !this.cubes.some((c) => c.mesh === h)) h = h.parent;
+    return h ? this.cubes.find((c) => c.mesh === h) : null;
   }
 
   grab(ctrl, c) {

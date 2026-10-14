@@ -11,7 +11,7 @@
 //    damit sie bei Kopfbewegung nicht hinterherhaengt). Haende werden zusaetzlich direkt aus dem
 //    Hand-Tracking eingefaerbt. Die Maske ist spaeter auch fuer Kleidung gedacht.
 import * as THREE from 'three';
-import { Skeleton, BONES } from '/skeleton.js';
+import { Skeleton, BONES, segDist } from '/skeleton.js';
 
 const W = 96, H = 72;            // Aufloesung der Auswertung
 const MAX_PLANES = 4;
@@ -320,7 +320,8 @@ export class BodyTracker {
     for (let i = 0; i < N; i++) if (lab[i] === 1 && this.skel.dist(P(i, 0), P(i, 1), P(i, 2), true) < 0.16) {
       this.pts[nc * 3] = P(i, 0); this.pts[nc * 3 + 1] = P(i, 1); this.pts[nc * 3 + 2] = P(i, 2); nc++;
     }
-    this.skel.fit(this.pts, nc);
+    const hc = [...(this.handCaps?.l || []), ...(this.handCaps?.r || [])];
+    this.skel.fit(this.pts, nc, (x, y, z) => hc.some((c) => segDist(x, y, z, c.a, c.b) < c.r + 0.04));
     // Oberkoerper/Arme: alle erkannten Punkte (ohne Haende)
     nc = 0;
     for (let i = 0; i < N; i++) if (lab[i] === 1) {

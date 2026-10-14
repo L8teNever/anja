@@ -58,9 +58,9 @@ export class MixedReality {
     this.scene.add(this.skelLines);
 
     // kleiner Griff "Beenden | Blau | Wuerfel | Weg" unten im Blickfeld (Brille)
-    this.hc = document.createElement('canvas'); this.hc.width = 640; this.hc.height = 150;
+    this.hc = document.createElement('canvas'); this.hc.width = 768; this.hc.height = 150;
     this.htex = new THREE.CanvasTexture(this.hc); this.htex.colorSpace = THREE.SRGBColorSpace;
-    this.handle = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.42 * 150 / 640),
+    this.handle = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5 * 150 / 768),
       new THREE.MeshBasicMaterial({ map: this.htex, transparent: true, depthTest: false }));
     this.handle.renderOrder = 30; this.handle.visible = false;
     this.scene.add(this.handle);
@@ -134,16 +134,17 @@ export class MixedReality {
     this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(m);
     const h = this.raycaster.intersectObject(this.handle, false)[0];
     if (!h) return;
-    const k = Math.min(4, Math.floor(h.uv.x * 5));
+    const k = Math.min(5, Math.floor(h.uv.x * 6));
     if (k === 0) this.end();
     else if (k === 1) this.toggleBlue();
     else if (k === 2) this.cubes.spawn(this.renderer.xr.getCamera());
     else if (k === 3) this.cubes.clear();
-    else { this.showSkel = !this.showSkel; this._drawHandle(); }
+    else if (k === 4) { this.showSkel = !this.showSkel; this._drawHandle(); }
+    else { this.cubes.cycleBreasts(); this._drawHandle(); }
   }
 
   _drawHandle() {
-    const ctx = this.hc.getContext('2d'), W = 640, H = 150;
+    const ctx = this.hc.getContext('2d'), W = 768, H = 150;
     ctx.clearRect(0, 0, W, H);
     ctx.font = '500 22px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(22,19,31,0.8)';
@@ -151,15 +152,16 @@ export class MixedReality {
     ctx.beginPath(); ctx.roundRect ? ctx.roundRect((W - tw) / 2, 2, tw, 36, 18) : ctx.rect((W - tw) / 2, 2, tw, 36); ctx.fill();
     ctx.fillStyle = '#f1edf9'; ctx.fillText(t, W / 2, 20);
     const lbl = this.strength > 0.5 ? 'Blau: stark' : this.strength > 0.2 ? 'Blau: leicht' : 'Blau: aus';
-    const bw = W / 5;
+    const bw = W / 6;
+    const bs = ['Brust', 'Brust S', 'Brust M', 'Brust L'][this.cubes.breastSize || 0];
     [['exit', 'close', 'Beenden'], ['blue', 'pan_tool', lbl], ['cube', 'add_box', 'Würfel'], ['clear', 'delete_sweep', 'Alle weg'],
-      ['skel', 'accessibility_new', this.showSkel ? 'Skelett an' : 'Skelett']].forEach(([id, ic, label], k) => {
-      const on = this.hover === id || (id === 'skel' && this.showSkel), x0 = k * bw;
+      ['skel', 'accessibility_new', this.showSkel ? 'Skelett an' : 'Skelett'], ['breasts', 'person', bs]].forEach(([id, ic, label], k) => {
+      const on = this.hover === id || (id === 'skel' && this.showSkel) || (id === 'breasts' && this.cubes.breastSize > 0), x0 = k * bw;
       ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x0 + 4, 46, bw - 8, 98, 30) : ctx.rect(x0 + 4, 46, bw - 8, 98);
       ctx.fillStyle = on ? 'rgba(182,156,255,0.92)' : 'rgba(22,19,31,0.85)'; ctx.fill();
       ctx.save(); ctx.translate(x0 + bw / 2 - 18, 52); ctx.scale(36 / 24, 36 / 24); ctx.fillStyle = on ? '#1f1638' : '#f1edf9';
       ctx.fill(new Path2D(ICON_PATHS[ic])); ctx.restore();
-      ctx.font = '600 21px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = on ? '#1f1638' : '#f1edf9';
+      ctx.font = '600 19px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = on ? '#1f1638' : '#f1edf9';
       ctx.fillText(label, x0 + bw / 2, 118);
     });
     this.htex.needsUpdate = true;
@@ -218,7 +220,7 @@ export class MixedReality {
       this.raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
       this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(m);
       const h = this.raycaster.intersectObject(this.handle, false)[0];
-      if (h) hov = ['exit', 'blue', 'cube', 'clear', 'skel'][Math.min(4, Math.floor(h.uv.x * 5))];
+      if (h) hov = ['exit', 'blue', 'cube', 'clear', 'skel', 'breasts'][Math.min(5, Math.floor(h.uv.x * 6))];
     }
     if (hov !== this.hover) { this.hover = hov; this._drawHandle(); }
     this.renderer.render(this.scene, this.camera);

@@ -1,4 +1,6 @@
-// Bewegliche Figur mit echtem 3D-Modell (models/michelle.glb, Mixamo-Skelett, three.js-Beispielmodell).
+// Bewegliche Figur mit echtem 3D-Modell (models/*.glb, alle mit demselben Mixamo-Skelett).
+// michelle.glb kommt aus den three.js-Beispielen; die anderen wurden mit tools/autorig.js
+// auf Michelles Skelett geriggt, deshalb funktionieren Posen und Griffe bei allen gleich.
 // Bewegen:
 //  - Becken/Bauch greifen: ganze Figur verschieben/drehen (macht room.js)
 //  - jedes Koerperteil greifen: Oberarm dreht die Schulter, Unterarm den Ellbogen, Oberschenkel
@@ -11,7 +13,24 @@ import * as THREE from 'three';
 import { GLTFLoader } from '/vendor/GLTFLoader.js';
 import * as SkeletonUtils from '/vendor/SkeletonUtils.js';
 
-const MODEL = '/models/michelle.glb';
+export const MODELS = [
+  { id: 'michelle', name: 'Michelle', url: '/models/michelle.glb' },
+  { id: 'tsunade', name: 'Tsunade', url: '/models/tsunade.glb' },
+  { id: 'miss-white', name: 'Miss White', url: '/models/miss-white.glb' },
+  { id: 'mei', name: 'Mei', url: '/models/mei.glb', family: 'mei' },   // eigenes Skelett (andere Grundpose)
+];
+// Quest-freundlich: Physical-Material (Spiegelung, IOR) -> Standard, Transparenz -> Alpha-Test (keine Sortierung)
+function lightMaterial(m) {
+  let out;
+  if (m.isMeshPhysicalMaterial) {
+    out = new THREE.MeshStandardMaterial();
+    for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'alphaMap', 'color', 'roughness',
+      'metalness', 'emissive', 'side', 'alphaTest', 'transparent', 'opacity', 'normalScale', 'name']) if (m[k] !== undefined) out[k] = m[k]?.clone && !m[k].isTexture ? m[k].clone() : m[k];
+  } else out = m.clone();
+  if (out.transparent && (out.map || out.alphaMap)) { out.transparent = false; out.alphaTest = Math.max(out.alphaTest || 0, 0.4); out.depthWrite = true; }
+  return out;
+}
+export const modelInfo = (id) => MODELS.find((m) => m.id === id) || MODELS[0];
 const B = (n) => `mixamorig${n}`;
 
 // Logische Gelenke -> Knochen; dir = Knochen, dessen Lage die Richtung bestimmt (Kind)
@@ -39,6 +58,8 @@ export const POSES = {
   'T-Pose': { ...LEGS_STRAIGHT, lShoulder: D(1, 0, 0), lElbow: D(1, 0, 0), rShoulder: D(-1, 0, 0), rElbow: D(-1, 0, 0) },
   Sitzen: { lHip: D(0.08, 0, 1), lKnee: D(0.05, 0, 1), rHip: D(-0.08, 0, 1), rKnee: D(-0.05, 0, 1),
     lShoulder: D(0.25, -1, -0.35), lElbow: D(0.15, -1, -0.3), rShoulder: D(-0.25, -1, -0.35), rElbow: D(-0.15, -1, -0.3) },
+  Stuhl: { lHip: D(0.1, -0.05, 1), lKnee: D(0.06, -1, 0.08), rHip: D(-0.1, -0.05, 1), rKnee: D(-0.06, -1, 0.08),
+    lShoulder: D(0.12, -1, 0.3), lElbow: D(0.08, -0.35, 1), rShoulder: D(-0.12, -1, 0.3), rElbow: D(-0.08, -0.35, 1) },
   Knien: { lHip: D(0.05, -1, 0.05), lKnee: D(0, -0.05, -1), rHip: D(-0.05, -1, 0.05), rKnee: D(0, -0.05, -1), ...ARMS_DOWN },
   Hocke: { lHip: D(0.3, -0.1, 1), lKnee: D(0.05, -1, -0.3), rHip: D(-0.3, -0.1, 1), rKnee: D(-0.05, -1, -0.3),
     chest: D(0, 1, 0.35), lShoulder: D(0.15, -0.25, 1), lElbow: D(0.1, -0.2, 1), rShoulder: D(-0.15, -0.25, 1), rElbow: D(-0.1, -0.2, 1) },
@@ -47,24 +68,30 @@ export const POSES = {
 export const POSE_NAMES = Object.keys(POSES);
 const POSE_ORDER = ['spine', 'chest', 'neck', 'lShoulder', 'lElbow', 'rShoulder', 'rElbow', 'lHip', 'lKnee', 'rHip', 'rKnee'];
 
-let gltfP = null;
-export function loadFigureModel() {
-  if (!gltfP) gltfP = new GLTFLoader().loadAsync(MODEL);
-  return gltfP;
+const gltfP = new Map();
+export function loadFigureModel(id) {
+  const m = modelInfo(id);
+  if (!gltfP.has(m.id)) {
+    const p = new GLTFLoader().loadAsync(m.url);
+    p.catch(() => gltfP.delete(m.id));   // beim naechsten Mal neu versuchen
+    gltfP.set(m.id, p);
+  }
+  return gltfP.get(m.id);
 }
 
 export class Figure extends THREE.Group {
-  // erst loadFigureModel() abwarten, dann new Figure(gltf)
-  constructor(gltf) {
+  // erst loadFigureModel(id) abwarten, dann new Figure(gltf, id)
+  constructor(gltf, modelId = 'michelle') {
     super();
     this.isFigure = true;
+    this.modelId = modelInfo(modelId).id;
     this.model = SkeletonUtils.clone(gltf.scene);
     this.add(this.model);
     this.parts = [];                       // fuer Strahl-Treffer
     this.model.traverse((o) => {
       if (o.isMesh) {
         o.frustumCulled = false;
-        o.material = o.material.clone();   // eigenes Material (Hervorheben)
+        o.material = lightMaterial(o.material);   // eigenes, schlankes Material (Hervorheben, Quest)
         o.material.emissive = o.material.emissive || new THREE.Color(0);
         this.parts.push(o);
         this.mat = o.material;
@@ -90,7 +117,33 @@ export class Figure extends THREE.Group {
     };
     for (const s of ['l', 'r']) { grip(`${s}Hand`, 'ikArm'); grip(`${s}Elbow`, 'elbow'); grip(`${s}Foot`, 'ikLeg'); grip(`${s}Knee`, 'knee'); }
     grip('head', 'head'); grip('chest', 'chest');
+    // Treffer-Kapseln statt Haut-Mesh (Strahl gegen 50.000 Dreiecke ist zu teuer fuer die Quest)
+    this.hits = [];
+    const hmat = Figure.hitMat || (Figure.hitMat = new THREE.MeshBasicMaterial({ visible: false }));
+    for (const [name, r] of SEGS) {
+      const a = this.j[name], b = this.c[name];
+      const pa = this._wp(a), pb = this._wp(b), len = pa.distanceTo(pb);
+      const cap = new THREE.Mesh(new THREE.CapsuleGeometry(r * 1.15, Math.max(0.01, len), 3, 8), hmat);
+      const mid = pa.clone().lerp(pb, 0.5), dir = pb.clone().sub(pa).normalize();
+      a.add(cap);
+      cap.position.copy(a.worldToLocal(mid));
+      const wq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      cap.quaternion.copy(a.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(wq));
+      cap.userData.seg = name;
+      this.hits.push(cap);
+    }
+    // Physik-Knochen (Brust, Haare), falls das Modell welche hat
+    this.jiggle = [];
+    for (const [n, kind] of [['BreastL', 'breast'], ['BreastR', 'breast'], ['HairBack', 'hair'], ['HairL', 'hair'], ['HairR', 'hair']]) {
+      const b = this.model.getObjectByName(B(n)), e = this.model.getObjectByName(B(n + '_End'));
+      if (b && e) this.jiggle.push({ bone: b, end: e, kind, rest: b.quaternion.clone() });
+    }
     this.setPose('Stehen');
+    // Gesicht zeigt in der Grundpose nach vorne (+Z der Figur): im Kopf-Raum merken
+    this.faceLocal = new THREE.Vector3(0, 0, 1).applyQuaternion(this.j.head.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(this._fq()));
+    // Hoehe der Fussgelenke ueber der Sohle (zum Aufsetzen beim Laufen)
+    this.measureBottom();
+    this.ankleH = Math.min(this._wp(this.j.lAnkle).y, this._wp(this.j.rAnkle).y) - (this.position.y + this.bottom);
   }
 
   /* ---------- Grundlagen ---------- */
@@ -117,8 +170,10 @@ export class Figure extends THREE.Group {
   }
 
   /* ---------- Posen ---------- */
-  setPose(name) {
-    const p = POSES[name] || POSES.Stehen;
+  setPose(name) { this.setPoseDirs(POSES[name] || POSES.Stehen, POSES[name] ? name : 'Stehen'); }
+
+  // Pose aus Richtungen je Gelenk (wie in POSES), z. B. fuer berechnete Gang-Posen
+  setPoseDirs(p, name = 'Eigene') {
     for (const [k, q] of Object.entries(this.rest)) this.j[k].quaternion.copy(q);
     this.j.root.position.copy(this.restRootPos);
     this.updateMatrixWorld(true);
@@ -135,6 +190,9 @@ export class Figure extends THREE.Group {
     this.updateMatrixWorld(true);
     this.update();
   }
+
+  // Blickrichtung des Gesichts (Welt), aus der Kopfdrehung
+  faceDir() { return this.faceLocal.clone().applyQuaternion(this.j.head.getWorldQuaternion(new THREE.Quaternion())); }
 
   getJoints() { const o = {}; for (const [k, j] of Object.entries(this.j)) o[k] = j.quaternion.toArray(); return o; }
   setJoints(o) {
@@ -227,8 +285,24 @@ export class Figure extends THREE.Group {
       m.computeBoundingBox();
       box.union(m.boundingBox.clone().applyMatrix4(m.matrixWorld));
     }
+    this.box = box;
     this.bottom = box.min.y - this.position.y;
     return this.bottom;
+  }
+
+  // tiefster Hautpunkt (Welt-y), der eine Bedingung erfuellt (z. B. nur Gesaess beim Sitzen)
+  lowestWhere(pred, step = 3) {
+    this.updateMatrixWorld(true);
+    const v = new THREE.Vector3();
+    let y = Infinity;
+    for (const m of this.parts) {
+      const n = m.geometry.attributes.position.count;
+      for (let i = 0; i < n; i += step) {
+        m.getVertexPosition(i, v); v.applyMatrix4(m.matrixWorld);
+        if (v.y < y && pred(v)) y = v.y;
+      }
+    }
+    return y;
   }
 
   ground(floorY = 0) { this.measureBottom(); this.position.y = floorY - this.bottom; this.updateMatrixWorld(true); this.update(); }
@@ -240,6 +314,7 @@ export class Figure extends THREE.Group {
 
   dispose() {
     this.parts.forEach((m) => m.material.dispose());
+    this.hits.forEach((h) => h.geometry.dispose());
     this.hmat.dispose();
   }
 }

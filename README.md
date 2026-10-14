@@ -1,5 +1,8 @@
 # Anja – 360°-Videos im Browser, auch offline
 
+> Bowling und Minigolf in Mixed Reality (**Isabella**) liegen jetzt im eigenen Repo
+> [L8teNever/isabella](https://github.com/L8teNever/isabella).
+
 Kleine Web-App in einem Docker-Container: zeigt 360°-Videos (equirektangular) im Browser an –
 per Ziehen, Bewegungssensor am Handy oder mit VR-Brille (WebXR). Jedes Video lässt sich per
 Knopf **offline speichern** und läuft danach ohne Internet weiter, inklusive Spulen.
@@ -151,19 +154,62 @@ im Raum verankert – läufst du herum, bleiben sie stehen.
 - **Boden:** Würfel und Figuren können nicht unter den Boden. Nah am Boden losgelassene
   Würfel legen sich flach hin; mit dem Controller auf den Boden zielen setzt einen Würfel
   genau dorthin. Die Quest kennt die Bodenhöhe aus ihrer Begrenzung – kein Scan nötig.
-  Wände und Möbel werden bewusst nicht erkannt.
-- **Figur:** „Figur +“ stellt eine Frau als echtes 3D-Modell (`public/models/michelle.glb`,
-  Mixamo-Skelett, aus den three.js-Beispielen) zu dir gedreht auf den Boden.
+- **Möbel als Auflage:** Ist der Raum in der Quest eingerichtet (Raumeinrichtung), nutzt die
+  App die Oberseiten von Bett, Sofa, Tisch usw. (WebXR plane-/mesh-detection) nur als
+  Auflage: über dem Bett losgelassene Würfel und Figuren landen auf der Matratze statt
+  darin. Der Boden bleibt der echte Boden, Wände bremsen nichts – man kann überall hinlaufen.
+  Tipp: Damit die Quest-Begrenzung nicht an den Möbeln stört, die Begrenzung ausschalten
+  (geht in der Quest nur mit Entwicklermodus); der Raum-Scan bleibt trotzdem erhalten.
+- **Figur:** „Figur +“ stellt eine Frau als echtes 3D-Modell zu dir gedreht auf den Boden.
+  Vier Modelle mit Mixamo-Skelett: **Michelle** (aus den three.js-Beispielen), **Tsunade**,
+  **Miss White** und **Mei** (`public/models/*.glb`). Mei hat zusätzlich Physik-Knochen für
+  Brust und Haare. Der Knopf mit dem Modellnamen
+  („Michelle ▸“, am Handy das Personen-Symbol) schaltet durch: die aktive Figur wird an
+  derselben Stelle und in derselben Pose gegen das nächste Modell getauscht, und neue
+  Figuren nutzen dieses Modell. Die Auswahl wird gemerkt, jede gespeicherte Figur behält ihr Modell.
   Becken/Bauch greifen = ganze Figur verschieben/drehen (bleibt aufrecht). Jedes andere
   Körperteil greifen = genau dieses Gelenk drehen (Oberarm, Unterarm, Oberschenkel,
   Unterschenkel, Brust, Kopf). Lila Punkte: Hand/Fuß ziehen – ganzer Arm/Bein folgt,
   Ellbogen/Knie – Knickrichtung. „Pose ▸“: Stehen, Arme hoch, T-Pose, Sitzen, Knien,
   Hocke, Liegen – danach frei anpassen.
+- **Zwei Modi:** „Spielen“ (Werkzeugleiste, am Handy das Gamepad-Symbol) und „Bauen“.
+  Im Bau-Modus wird alles hingestellt und verschoben wie oben. Im Spiel-Modus lässt sich
+  nichts mehr verschieben, dafür reagieren die Figuren:
+  - **Berühren:** Fingerspitzen und Handflächen (Hand-Tracking) bzw. die Controller sind
+    Kollider. Drückt man z. B. gegen den Kopf, gibt er nach, nimmt Hals und Oberkörper ein
+    Stück mit und federt zurück – jedes Gelenk hängt an einer gedämpften Feder.
+  - **Blick:** Die Figur schaut dich an (Kopf und Hals, bis 65°), außer im Liegen.
+  - **Rundes Menü:** Figur anklicken (Abzug, Pinch, am Handy tippen) – Hinsetzen, Hinlegen,
+    Hingehen, Zu mir, Aufstehen. Mit dem Finger antippen geht auch.
+  - **Platzfinder:** sucht in den erkannten Möbeln Sitzplätze (Fläche 28–80 cm hoch, an der
+    Kante, davor freier Boden für die Füße, keine Wand davor; je Stelle der Sitz mit dem
+    meisten Platz) und Liegeplätze (Bett oder große Fläche in Betthöhe). Sie erscheinen als
+    grüne/blaue Markierungen zum Auswählen; bei „Hingehen“ auf den Boden zielen
+    (grün = erreichbar, rot = nicht).
+  - **Laufen:** Weg über ein Laufraster (20 cm, Möbel und Wände mit Abstand gesperrt,
+    A* mit geglättetem Weg), berechneter Gang, am Ziel umdrehen und weich in die
+    Sitz-/Liegepose übergehen. Beim Sitzen stehen die Füße per IK auf dem Boden, beim
+    Liegen liegt sie längs auf dem Bett, Füße zu dir.
+  - „Flächen“ blendet die erkannten Möbel-Flächen ein.
+  - **Brust- und Haarphysik** (Mei): die Spitze jedes Physik-Knochens hängt als Massepunkt an
+    einer Feder – schwingt beim Laufen und Hinsetzen nach und lässt sich mit der Hand wegdrücken.
+- **Flüssig auf der Quest:** Treffer (Strahl, Hover) gehen gegen einfache Kapseln statt gegen die
+  Haut (zehntausende Dreiecke); Materialien werden beim Laden zu einfachen Standard-Materialien
+  ohne Spiegelungs-Extras, Transparenz wird zu Alpha-Test (keine Sortierung); Foveated Rendering
+  an; Modelle mit reduzierten Polygonen und verkleinerten JPEG-Texturen.
+- **Mei:** kam als Character-Creator-Export ohne Skelett in fester Pose (Hand an der Hüfte,
+  Beine gekreuzt). Mit `tools/rig-mei.py` in Blender geriggt (siehe Kopf der Datei).
+- **Eigene Modelle:** Tsunade und Miss White kamen ohne Skelett (statische T-Pose). Sie wurden
+  mit `tools/autorig.js` auf Michelles Skelett geriggt: Körper vermessen, Gelenke an die
+  passenden Stellen setzen, Hautgewichte von Michelle übertragen. Neue Modelle brauchen
+  ebenfalls eine T-Pose, Blick nach vorne (+Z). Danach in `MODELS` (`public/figure.js`)
+  und `public/sw.js` eintragen. Modelle liegen offline in einem eigenen Cache, der
+  App-Updates übersteht; ändert sich ein Modell, bekommt es einen neuen Dateinamen.
 - **Schwerkraft:** losgelassene Würfel fallen auf den Boden oder auf andere Würfel (stapeln)
   und legen sich flach hin, Figuren fallen auf den Boden – nichts schwebt.
 - **Feste Plätze:** die App hängt alles an einen dauerhaften Raum-Anker – Würfel und Figuren (samt Pose) stehen
   nach Neustart oder App-Update wieder genau am selben Platz.
-- Werkzeugleiste (Brille, schwebt unten) bzw. Knöpfe (Handy): Würfel +, Figur +, Pose ▸,
+- Werkzeugleiste (Brille, schwebt unten) bzw. Knöpfe (Handy): Würfel +, Figur +, Modell ▸, Pose ▸,
   Letztes weg, Alle weg, Beenden. Die Würfel werden gespeichert und beim nächsten Start wieder
   aufgestellt (so genau, wie die Brille den Raum wiedererkennt).
 
@@ -236,6 +282,9 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/band.js` | Rotes Band im Kamerabild finden |
 | `public/mr.js` | Mixed Reality: Unterkörper per Tiefensensor blau einfärben |
 | `public/room.js` | Raum-Modus: Würfel in der Durchsicht platzieren und greifen |
+| `public/room-surfaces.js` | Möbel-Flächen aus der Raumeinrichtung (Auflage, Platzfinder) |
+| `public/figure-motion.js` | Spiel-Modus: Berührungs-Physik, Blick, Laufen, Sitzen, Liegen |
+| `public/radial-menu.js` | Rundes Menü und Platz-Markierungen |
 | `public/figure.js` | Figur (3D-Modell) mit Gelenken, Posen und Zwei-Knochen-IK |
 | `public/models/` | 3D-Modell der Figur (GLB mit Mixamo-Skelett) |
 | `upload.js` | Hochladen in Stücken mit Fortsetzen (nginx-njs) |

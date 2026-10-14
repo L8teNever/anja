@@ -8,6 +8,8 @@ const VERSION = '__APP_VERSION__';
 const APP_CACHE = `anja-app-${VERSION}`;
 const VIDEO_CACHE = 'anja-videos';
 const LIST_CACHE = 'anja-list';
+const MODEL_CACHE = 'anja-models';   // 3D-Modelle: bleiben ueber App-Updates erhalten (geaendertes Modell = neuer Dateiname)
+const MODELS = ['/models/michelle.glb', '/models/tsunade.glb', '/models/miss-white.glb', '/models/mei.glb'];
 
 const SHELL = [
   '/',
@@ -21,6 +23,9 @@ const SHELL = [
   '/band.js',
   '/room.js',
   '/mr.js',
+  '/room-surfaces.js',
+  '/figure-motion.js',
+  '/radial-menu.js',
   '/figure.js',
   '/icons.js',
   '/vendor/three.module.min.js',
@@ -28,7 +33,6 @@ const SHELL = [
   '/vendor/GLTFLoader.js',
   '/vendor/BufferGeometryUtils.js',
   '/vendor/SkeletonUtils.js',
-  '/models/michelle.glb',
   '/manifest.webmanifest',
   '/icon.svg',
 ];
@@ -40,6 +44,12 @@ self.addEventListener('install', (event) => {
     await Promise.all(SHELL.map(async (url) => {
       const res = await fetch(new Request(url, { cache: 'reload' }));
       if (res.ok) await cache.put(url, res);
+    }));
+    // Modelle nur laden, wenn sie noch fehlen (gross, aendern sich selten)
+    const mc = await caches.open(MODEL_CACHE);
+    await Promise.all(MODELS.map(async (url) => {
+      if (await mc.match(url)) return;
+      try { const res = await fetch(url); if (res.ok) await mc.put(url, res); } catch {}
     }));
     await self.skipWaiting();
   })());
@@ -122,6 +132,19 @@ self.addEventListener('fetch', (event) => {
   // Videos: offline gespeicherte aus dem Cache, sonst normal streamen
   if (url.pathname.startsWith('/videos/')) {
     event.respondWith((async () => (await videoFromCache(req)) || fetch(req))());
+    return;
+  }
+
+  // 3D-Modelle: eigener Cache, der Updates ueberlebt
+  if (url.pathname.startsWith('/models/')) {
+    event.respondWith((async () => {
+      const cache = await caches.open(MODEL_CACHE);
+      const hit = await cache.match(url.pathname);
+      if (hit) return hit;
+      const res = await fetch(req);
+      if (res.ok) cache.put(url.pathname, res.clone());
+      return res;
+    })());
     return;
   }
 

@@ -262,7 +262,10 @@ export class MixedReality {
     this.wrists = {}; this.handCaps = {}; this.legMats = {};
     if (!frame || !ref) return out;
     const V = (p) => new THREE.Vector3(p.x, p.y, p.z);
-    for (const src of frame.session.inputSources) {
+    // inputSources = aktive Eingaben; trackedSources = zusaetzlich getrackte (z. B. Controller am Bein,
+    // waehrend die Haende aktiv sind) – nur wenn die Brille Haende + Controller gleichzeitig anbietet.
+    const srcs = [...frame.session.inputSources, ...(frame.session.trackedSources || [])];
+    for (const src of srcs) {
       const key = 'hand-' + src.handedness;
       if (src.hand) {
         const pts = [];

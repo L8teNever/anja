@@ -74,7 +74,12 @@ export class Skeleton {
   predict(head, q, wrists, floorY) {
     const up = UP.clone().applyQuaternion(q), f = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-    if (this.lying ? up.y > 0.5 : up.y < 0.25) this.lying = !this.lying;
+    // Liegen nur, wenn der Kopf tief ist UND du nicht nach unten schaust
+    // (Runterschauen im Stehen/Sitzen kippt den Kopf genauso – das ist kein Liegen).
+    const headH = head.y - floorY;
+    if (!this.lying && headH < 0.95 && f.y > -0.25 && up.y < 0.5) this.lying = true;
+    else if (this.lying && (headH > 1.1 || up.y > 0.75 || f.y < -0.6)) this.lying = false;
+    this.eye = head.clone();
     const k = this.ready ? 0.15 : 1;
 
     // Koerperrichtung (traege: der Kopf darf sich drehen, ohne dass der Koerper mitdreht)
@@ -103,7 +108,16 @@ export class Skeleton {
     this.fwd.addScaledVector(this.torsoDir, -this.fwd.dot(this.torsoDir)).normalize();
 
     const J = this.j, T = this.torsoDir, S = this.side;
-    J.neck.copy(head).add(new THREE.Vector3(0, -this.dim.neckDrop, 0.08).applyQuaternion(q));   // Drehpunkt hinter/unter den Augen
+    // Nacken: der Kopf kippt nicht nur im oberen Gelenk, die Halswirbelsaeule beugt sich mit (etwa halber Winkel).
+    // So bleibt der Koerper-Bezug beim Runterschauen stehen, statt mit dem Kopf zu wandern.
+    const upper = new THREE.Vector3(0, this.dim.neckDrop, -0.08).applyQuaternion(q);   // oberes Kopfgelenk -> Augen
+    if (!this.lying) {
+      const pitch = Math.asin(Math.max(-1, Math.min(1, -f.y))), hh = pitch / 2;   // >0: nach unten
+      const hf = hx * hx + hz * hz > 1e-6 ? new THREE.Vector3(hx, 0, hz).normalize() : yawFwd;   // Blickrichtung waagrecht
+      const seg = (h) => UP.clone().multiplyScalar(0.12 * Math.cos(h) - 0.03 * Math.sin(h)).addScaledVector(hf, 0.12 * Math.sin(h) + 0.03 * Math.cos(h));
+      const c7 = head.clone().sub(upper).sub(seg(hh));            // unterer Halswirbel (bleibt am Koerper)
+      J.neck.copy(c7).add(seg(0));                                  // Bezugspunkt wie bei aufrechtem Kopf
+    } else J.neck.copy(head).sub(upper);
     J.pelvis.copy(J.neck).addScaledVector(T, this.dim.torso);
     J.shL.copy(J.neck).addScaledVector(T, this.dim.shDown).addScaledVector(S, -this.dim.shHalf);
     J.shR.copy(J.neck).addScaledVector(T, this.dim.shDown).addScaledVector(S, this.dim.shHalf);
@@ -276,6 +290,9 @@ export class Skeleton {
       }
       if (bestScore >= 6 && bestScore > cur + 2) this.swivel[s] += (best - this.swivel[s]) * 0.5;
     }
+    // Rumpf-Neigung nur im Liegen einpassen: im Stehen/Sitzen sieht der Sensor nur die Vorderseite
+    // von Brust/Bauch und wuerde den Rumpf sonst nach vorne ziehen.
+    if (!this.lying) { this.lean *= 0.9; return; }
     // Rumpf: Neigung, bei der die meisten Punkte im Rumpf liegen (Arme/Beine ausgenommen)
     const T0 = this.torsoBase, F = this.fwd;
     let bestL = this.lean, bestS = -1, curS = -1;
@@ -335,12 +352,23 @@ export class Skeleton {
   fit(A, n, skip = () => false) {
     const J = this.j, { thigh, shin, foot: FOOT } = this.dim;
     const P = J.pelvis, T = this.torsoDir;
-    const dirFrom = (o, test, minD, maxD) => {
+    const E = this.eye;
+    // Der Sensor sieht nur die Oberflaeche, die zu dir zeigt. Der Knochen liegt um den Radius dahinter:
+    // Punkt senkrecht zum Knochen von den Augen weg verschieben.
+    const dirFrom = (o, test, minD, maxD, end, rr) => {
       const d = new THREE.Vector3(); let c = 0;
+      const b = end.clone().sub(o).normalize();
       for (let k = 0; k < n; k++) {
-        const x = A[k * 3], y = A[k * 3 + 1], z = A[k * 3 + 2];
+        let x = A[k * 3], y = A[k * 3 + 1], z = A[k * 3 + 2];
+        if (!test(x, y, z)) continue;
+        if (E) {
+          const ex = E.x - x, ey = E.y - y, ez = E.z - z, el = Math.sqrt(ex * ex + ey * ey + ez * ez);
+          const bd = ex * b.x + ey * b.y + ez * b.z;
+          const px = ex - b.x * bd, py = ey - b.y * bd, pz = ez - b.z * bd, pl = Math.sqrt(px * px + py * py + pz * pz);
+          if (pl > 0.02 * el) { x -= px / pl * rr; y -= py / pl * rr; z -= pz / pl * rr; }
+        }
         const dx = x - o.x, dy = y - o.y, dz = z - o.z, l = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (l < minD || l > maxD || !test(x, y, z)) continue;
+        if (l < minD || l > maxD) continue;
         d.x += dx / l; d.y += dy / l; d.z += dz / l; c++;
       }
       return c >= 8 ? d.normalize() : null;
@@ -357,11 +385,11 @@ export class Skeleton {
       };
       const hip = J['hip' + s], kn = J['kn' + s].clone(), an = J['an' + s].clone(), to = J['to' + s].clone();
       let seen = 0;
-      const dT = dirFrom(hip, (x, y, z) => ok(x, y, z) && segDist(x, y, z, hip, kn) < 0.22, 0.12, thigh + 0.06);
+      const dT = dirFrom(hip, (x, y, z) => ok(x, y, z) && segDist(x, y, z, hip, kn) < 0.22, 0.12, thigh + 0.06, kn, 0.075);
       if (dT) { kn.copy(hip).addScaledVector(dT, thigh); seen++; }
-      const dS = dirFrom(kn, (x, y, z) => ok(x, y, z) && segDist(x, y, z, kn, an) < 0.2 && segDist(x, y, z, hip, kn) > 0.06, 0.1, shin + 0.05);
+      const dS = dirFrom(kn, (x, y, z) => ok(x, y, z) && segDist(x, y, z, kn, an) < 0.2 && segDist(x, y, z, hip, kn) > 0.06, 0.1, shin + 0.05, an, 0.05);
       if (dS) { an.copy(kn).addScaledVector(dS, shin); seen++; }
-      const dF = dirFrom(an, (x, y, z) => ok(x, y, z) && segDist(x, y, z, an, to) < 0.16 && segDist(x, y, z, kn, an) > 0.08, 0.05, FOOT + 0.06);
+      const dF = dirFrom(an, (x, y, z) => ok(x, y, z) && segDist(x, y, z, an, to) < 0.16 && segDist(x, y, z, kn, an) > 0.08, 0.05, FOOT + 0.06, to, 0.035);
       if (dF) { to.copy(an).addScaledVector(dF, FOOT); seen++; }
       const def = this.def[key];
       if (!def) continue;

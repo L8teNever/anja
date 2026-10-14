@@ -94,6 +94,12 @@ export class MixedReality {
       return c;
     });
     this.raycaster = new THREE.Raycaster();
+    // Blick-Zeiger: Ring + fuellender Punkt
+    this.reticle = new THREE.Group();
+    const rm = (g, c) => { const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: c, transparent: true, depthTest: false })); m.renderOrder = 40; return m; };
+    this.reticle.add(rm(new THREE.RingGeometry(0.011, 0.014, 32), 0xffffff), rm(new THREE.CircleGeometry(0.011, 32), 0xb69cff));
+    this.reticle.visible = false;
+    this.scene.add(this.reticle);
     this._drawHandle();
     this._onResize = () => this.resize();
     addEventListener('resize', this._onResize);
@@ -141,8 +147,12 @@ export class MixedReality {
   _press(c) {
     if (this.phone) return;
     const m = new THREE.Matrix4().extractRotation(c.matrixWorld);
-    this.raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
-    this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(m);
+    this._pressRay(new THREE.Vector3().setFromMatrixPosition(c.matrixWorld), new THREE.Vector3(0, 0, -1).applyMatrix4(m));
+  }
+
+  _pressRay(o, d) {
+    this.raycaster.ray.origin.copy(o);
+    this.raycaster.ray.direction.copy(d);
     if (this.measure.open) {
       const mh = this.raycaster.intersectObject(this.measure.mesh, false)[0];
       if (mh) { this.measure.press(mh.uv); return; }
@@ -249,6 +259,7 @@ export class MixedReality {
       if (this.measure.open) { const mh = this.raycaster.intersectObject(this.measure.mesh, false)[0]; if (mh) mhov = mh.uv; }
     }
     this.measure.setHover(mhov);
+    this._gaze(cam);
     this.measure.update(this.legs.skel.j.pelvis, this.legs.floorY);
     if (hov !== this.hover) { this.hover = hov; this._drawHandle(); }
     this.renderer.render(this.scene, this.camera);
@@ -314,6 +325,35 @@ export class MixedReality {
       }
     } catch { /* nicht unterstuetzt */ }
     return out;
+  }
+
+  // Steuerung per Blick: Knopf 1,2 s anschauen -> ausgeloest. Aktiv, wenn keine Hand/kein Controller zeigt
+  // (z. B. Controller am Bein und die Quest hat die Haende abgeschaltet).
+  _gaze(cam) {
+    const pointing = this.ctrls.some((c) => c.userData.mode && !this._legCtrl(c) && c.userData.src && (c.userData.src.hand || this.legMode === 'off'));
+    let key = null, hit = null;
+    const o = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
+    const d = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld));
+    if (!pointing && !this.phone) {
+      this.raycaster.ray.origin.copy(o); this.raycaster.ray.direction.copy(d);
+      const mh = this.measure.open ? this.raycaster.intersectObject(this.measure.mesh, false)[0] : null;
+      const a = mh && this.measure._at(mh.uv);
+      if (a) { key = 'm:' + a; hit = mh; }
+      else {
+        const h = this.raycaster.intersectObject(this.handle, false)[0];
+        if (h && h.uv.y < 0.69) { key = 'h:' + Math.min(6, Math.floor(h.uv.x * 7)); hit = h; }
+      }
+    }
+    const now = performance.now();
+    if (key !== this._gKey) { this._gKey = key; this._gT0 = now; this._gDone = false; }
+    const prog = key && !this._gDone ? Math.min(1, (now - this._gT0) / 1200) : 0;
+    this.reticle.visible = !!hit;
+    if (hit) {
+      this.reticle.position.copy(hit.point).addScaledVector(d, -0.005);
+      this.reticle.lookAt(o);
+      this.reticle.children[1].scale.setScalar(Math.max(0.001, prog));
+    }
+    if (prog >= 1) { this._gDone = true; this._pressRay(o, d); }
   }
 
   _legCtrl(c) { return this.legMode !== 'off' && c.userData.src && !c.userData.src.hand; }

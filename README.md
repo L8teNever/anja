@@ -159,6 +159,8 @@ stehend, sitzend und liegend.
 - **Controller an den Schienbeinen** (im Menü „Maße“): Knopf drücken, 10 s Zeit, Controller vorne unters Knie
   befestigen und gerade hinstellen – dann folgen Knie, Knöchel und Fuß direkt den Controllern. Hände bleiben
   per Hand-Tracking, sofern die Brille Hände und Controller gleichzeitig erlaubt.
+- **Steuerung per Blick:** Zeigt keine Hand und kein Controller (z. B. Controller am Bein und die Quest hat auf
+  Controller umgeschaltet), reicht es, einen Knopf 1,2 s anzuschauen – ein Ring füllt sich, dann wird er ausgelöst.
 - Unten im Blickfeld: „Beenden“, „Blau: stark/leicht/aus“, „Würfel“, „Alle weg“, „Skelett“, „Brust“, „Maße“, darüber der Status.
 
 ## Raum-Modus (Durchsicht ohne Video)

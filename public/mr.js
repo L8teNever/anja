@@ -1,10 +1,11 @@
 // Mixed-Reality-Modus: volle Durchsicht, dein Unterkoerper wird blau eingefaerbt.
-// Quest 3 (Tiefensensor): Erkennung in leg-tracker.js – nur Beine/Fuesse, Boden live gemessen,
-// Oberkoerper und Haende ausgespart. Die Maske ist spaeter auch fuer Kleidung gedacht.
+// Quest 3 (Tiefensensor): Erkennung in body-tracker.js – dein ganzer Koerper (Beine, Oberkoerper,
+// Arme, Haende), stehend, sitzend oder liegend; Boden/Bett/Sitz werden ausgespart.
+// Die Maske ist spaeter auch fuer Kleidung gedacht.
 // Ohne Tiefensensor: Beine werden aus der Kopfposition geschaetzt (als "geschaetzt" angezeigt).
 import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
-import { LegTracker } from '/leg-tracker.js';
+import { BodyTracker } from '/body-tracker.js';
 
 const BLUE = new THREE.Color(0x3d8bff);
 const JOINTS = [['wrist', 0.08], ['middle-finger-metacarpal', 0.08], ['index-finger-tip', 0.045], ['thumb-tip', 0.045], ['pinky-finger-tip', 0.045]];
@@ -23,8 +24,8 @@ export class MixedReality {
     this.floorY = 0;
     this.strength = 1;
 
-    // Bein-Erkennung per Tiefensensor (nur Beine/Fuesse, kein Oberkoerper, keine Haende)
-    this.legs = new LegTracker(this.renderer, this.scene);
+    // Koerper-Erkennung per Tiefensensor
+    this.legs = new BodyTracker(this.renderer, this.scene);
 
     // Ersatz ohne Tiefensensor: geschaetzte Beine unter dem Kopf
     const mat = new THREE.MeshBasicMaterial({ color: BLUE, transparent: true, opacity: 0.4, depthWrite: false });
@@ -69,7 +70,7 @@ export class MixedReality {
   async start(overlay) {
     const fmts = ['float32', 'luminance-alpha', 'unsigned-short'];
     const init = {
-      optionalFeatures: ['local-floor', 'depth-sensing', 'hand-tracking'],
+      optionalFeatures: ['local-floor', 'depth-sensing', 'hand-tracking', 'body-tracking'],
       depthSensing: { usagePreference: ['gpu-optimized'], dataFormatPreference: fmts, formatPreference: fmts },
     };
     if (overlay) { init.optionalFeatures.push('dom-overlay'); init.domOverlay = { root: overlay }; }
@@ -88,7 +89,7 @@ export class MixedReality {
   end() { this.session?.end(); }
 
   get status() {
-    return this.depthOk ? 'Beine per Tiefensensor erkannt' : this.depth ? 'Warte auf Tiefensensor …' : 'Kein Tiefensensor – Beine geschätzt';
+    return this.depthOk ? 'Körper per Tiefensensor erkannt' : this.depth ? 'Warte auf Tiefensensor …' : 'Kein Tiefensensor – Beine geschätzt';
   }
 
   toggleBlue() {
@@ -154,7 +155,7 @@ export class MixedReality {
     if (this._needPlace && frame) { this._needPlace = false; this._placeHandle(true); }
     if (!this.phone) { this.handle.visible = true; this._placeHandle(false); }
 
-    // Tiefensensor: nur Bildpunkte, die zu deinen Beinen/Fuessen gehoeren
+    // Tiefensensor: alle Bildpunkte, die zu deinem Koerper gehoeren
     const was = this.depthOk;
     this.legs.update(frame, t, this._handPoints(frame));
     this.depthOk = this.legs.ok;
@@ -185,7 +186,7 @@ export class MixedReality {
     this.renderer.render(this.scene, this.camera);
   }
 
-  // Haende/Controller als Kugeln, die nie eingefaerbt werden
+  // Haende/Controller (direkt eingefaerbt) und Koerper-Gelenke (Startpunkte der Erkennung)
   _handPoints(frame) {
     const out = [], ref = this.renderer.xr.getReferenceSpace();
     if (!frame || !ref) return out;
@@ -193,14 +194,21 @@ export class MixedReality {
       if (src.hand) {
         for (const [name, r] of JOINTS) {
           const j = src.hand.get(name), p = j && frame.getJointPose?.(j, ref);
-          if (p) out.push({ pos: p.transform.position, r });
+          if (p) out.push({ pos: p.transform.position, r, hand: true });
         }
       } else if (src.gripSpace) {
         const p = frame.getPose(src.gripSpace, ref);
-        if (p) out.push({ pos: p.transform.position, r: 0.13 });
+        if (p) out.push({ pos: p.transform.position, r: 0.11, hand: true });
       }
     }
-    return out.slice(0, 10);
+    // Body-Tracking der Brille (falls vorhanden)
+    try {
+      if (frame.body) for (const [, space] of frame.body) {
+        const p = frame.getPose(space, ref);
+        if (p) out.push({ pos: p.transform.position, r: 0.09 });
+      }
+    } catch { /* nicht unterstuetzt */ }
+    return out;
   }
 
   dispose() {

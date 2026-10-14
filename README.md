@@ -129,14 +129,16 @@ Im Player unten die Hand:
   - Im VR-Menü schaltet „Hände“ durch: Aus → Tracking → Band. Die Kamera startet bei
     Bedarf auch mitten in VR. Der Status steht unten im VR-Menü.
 
-## Mixed Reality (Beine blau)
+## Mixed Reality (Körper blau)
 
 Auf der Startseite das Personen-Symbol: volle Durchsicht, du siehst deine ganze Umgebung.
-Schaust du an dir runter, werden Beine und Füße blau leuchtend eingefärbt.
+Schaust du an dir runter, wird dein Körper (Beine, Füße, Oberkörper, Arme, Hände) blau eingefärbt –
+stehend, sitzend und liegend.
 
-- **Quest 3:** über den Tiefensensor (WebXR depth-sensing). Für jeden Bildpunkt wird die echte
-  Raumposition berechnet – liegt sie über dem Boden, unter der Hüfte und nah um dich herum,
-  wird sie blau. Folgt live jeder Bewegung (Stehen, Sitzen, Beine heben).
+- **Quest 3:** über den Tiefensensor (WebXR depth-sensing, `public/body-tracker.js`). Jeder Bildpunkt
+  wird in eine Raumposition umgerechnet. Auflageflächen (Boden, Bett, Sitz, Tisch) werden live
+  erkannt und ausgespart. Von Händen, Körper-Gelenken (falls die Brille Body-Tracking liefert) und
+  Brust/Bauch unter dem Kinn aus wächst die Erkennung über zusammenhängende Tiefe auf den ganzen Körper.
 - **Ohne Tiefensensor** (ältere Brillen, Handy): Beine werden aus der Kopfposition geschätzt.
 - Unten im Blickfeld: „Beenden“ und „Blau: stark/leicht/aus“, darüber der Status.
 
@@ -280,7 +282,7 @@ Bei jedem Push auf `main` baut GitHub Actions das Image neu (`:latest` und `:1.0
 | `public/vendor/` | three.js (MIT), lokal mitgeliefert, damit alles offline geht |
 | `public/projection.js` | Formate: Erkennung, Umrechnung, Vorschaubilder, Greenscreen-Auto |
 | `public/band.js` | Rotes Band im Kamerabild finden |
-| `public/mr.js` | Mixed Reality: Unterkörper per Tiefensensor blau einfärben |
+| `public/mr.js` | Mixed Reality: Körper per Tiefensensor blau einfärben (`body-tracker.js`) |
 | `public/room.js` | Raum-Modus: Würfel in der Durchsicht platzieren und greifen |
 | `public/room-surfaces.js` | Möbel-Flächen aus der Raumeinrichtung (Auflage, Platzfinder) |
 | `public/figure-motion.js` | Spiel-Modus: Berührungs-Physik, Blick, Laufen, Sitzen, Liegen |

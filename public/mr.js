@@ -1,37 +1,13 @@
 // Mixed-Reality-Modus: volle Durchsicht, dein Unterkoerper wird blau eingefaerbt.
-// Quest 3 (Tiefensensor, WebXR depth-sensing): fuer jeden Bildpunkt wird aus der Tiefe die echte
-// Position im Raum berechnet. Liegt sie ueber dem Boden, unterhalb der Huefte und nah um dich
-// herum, ist es dein Bein/Fuss -> blau leuchtend. Das folgt live jeder Bewegung.
+// Quest 3 (Tiefensensor): Erkennung in leg-tracker.js – nur Beine/Fuesse, Boden live gemessen,
+// Oberkoerper und Haende ausgespart. Die Maske ist spaeter auch fuer Kleidung gedacht.
 // Ohne Tiefensensor: Beine werden aus der Kopfposition geschaetzt (als "geschaetzt" angezeigt).
 import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
+import { LegTracker } from '/leg-tracker.js';
 
 const BLUE = new THREE.Color(0x3d8bff);
-
-const LEG_VERT = `void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }`;
-const LEG_FRAG = `
-uniform sampler2DArray depthColor;
-uniform float depthWidth, depthHeight;
-uniform mat4 invProj0, invProj1, camW0, camW1;
-uniform vec3 head;
-uniform float floorY, hipY, radius, time, strength;
-uniform vec3 color;
-void main() {
-  vec2 c = vec2(gl_FragCoord.x / depthWidth, gl_FragCoord.y / depthHeight);
-  int eye = 0;
-  if (c.x >= 1.0) { eye = 1; c.x -= 1.0; }
-  float d = texture(depthColor, vec3(c, float(eye))).r;
-  if (d <= 0.0 || d >= 0.9999) discard;
-  vec4 v = (eye == 0 ? invProj0 : invProj1) * vec4(c * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
-  v /= v.w;
-  vec3 w = ((eye == 0 ? camW0 : camW1) * v).xyz;          // echte Raumposition dieses Bildpunkts
-  float h = w.y - floorY;
-  float r = length(w.xz - head.xz);
-  if (h < 0.02 || w.y > hipY || r > radius) discard;      // nur Unterkoerper um dich herum
-  float edge = smoothstep(radius, radius * 0.75, r) * smoothstep(0.02, 0.06, h) * smoothstep(hipY, hipY - 0.08, w.y);
-  float wave = 0.5 + 0.5 * sin(time * 3.0 + h * 18.0);    // leichtes Schimmern nach oben
-  gl_FragColor = vec4(color + 0.15 * wave, (0.38 + 0.22 * wave) * edge * strength);
-}`;
+const JOINTS = [['wrist', 0.08], ['middle-finger-metacarpal', 0.08], ['index-finger-tip', 0.045], ['thumb-tip', 0.045], ['pinky-finger-tip', 0.045]];
 
 export class MixedReality {
   constructor(container) {
@@ -47,20 +23,8 @@ export class MixedReality {
     this.floorY = 0;
     this.strength = 1;
 
-    // Tiefen-Ueberlagerung (ganzer Bildschirm, pro Auge)
-    this.legU = {
-      depthColor: { value: null }, depthWidth: { value: 1 }, depthHeight: { value: 1 },
-      invProj0: { value: new THREE.Matrix4() }, invProj1: { value: new THREE.Matrix4() },
-      camW0: { value: new THREE.Matrix4() }, camW1: { value: new THREE.Matrix4() },
-      head: { value: new THREE.Vector3() }, floorY: { value: 0 }, hipY: { value: 0.9 },
-      radius: { value: 0.85 }, time: { value: 0 }, strength: { value: 1 }, color: { value: BLUE.clone() },
-    };
-    this.legQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
-      vertexShader: LEG_VERT, fragmentShader: LEG_FRAG, uniforms: this.legU,
-      transparent: true, depthTest: false, depthWrite: false,
-    }));
-    this.legQuad.frustumCulled = false; this.legQuad.renderOrder = 20; this.legQuad.visible = false;
-    this.scene.add(this.legQuad);
+    // Bein-Erkennung per Tiefensensor (nur Beine/Fuesse, kein Oberkoerper, keine Haende)
+    this.legs = new LegTracker(this.renderer, this.scene);
 
     // Ersatz ohne Tiefensensor: geschaetzte Beine unter dem Kopf
     const mat = new THREE.MeshBasicMaterial({ color: BLUE, transparent: true, opacity: 0.4, depthWrite: false });
@@ -115,6 +79,7 @@ export class MixedReality {
     this.session = s;
     this.phone = !!s.domOverlayState;
     this.depth = !!s.enabledFeatures?.includes?.('depth-sensing');
+    this.legs.setBase(this.floorY);
     s.addEventListener('end', () => { this.session = null; this.onEnd?.(); });
     this._needPlace = true;
     return s;
@@ -128,7 +93,7 @@ export class MixedReality {
 
   toggleBlue() {
     this.strength = this.strength > 0.5 ? 0.45 : this.strength > 0.2 ? 0 : 1;
-    this.legU.strength.value = this.strength;
+    this.legs.setStrength(this.strength);
     this.est.children.forEach((m) => { m.material.opacity = 0.4 * this.strength; });
     this._drawHandle();
   }
@@ -189,21 +154,10 @@ export class MixedReality {
     if (this._needPlace && frame) { this._needPlace = false; this._placeHandle(true); }
     if (!this.phone) { this.handle.visible = true; this._placeHandle(false); }
 
-    // Tiefensensor: Bildpunkte im Unterkoerper-Bereich blau
-    const tex = xr.getDepthTexture?.();
+    // Tiefensensor: nur Bildpunkte, die zu deinen Beinen/Fuessen gehoeren
     const was = this.depthOk;
-    this.depthOk = !!tex && cam.cameras?.length > 0;
-    if (this.depthOk) {
-      const u = this.legU, c0 = cam.cameras[0], c1 = cam.cameras[1] || c0;
-      u.depthColor.value = tex;
-      u.depthWidth.value = c0.viewport.z; u.depthHeight.value = c0.viewport.w;
-      u.invProj0.value.copy(c0.projectionMatrixInverse); u.invProj1.value.copy(c1.projectionMatrixInverse);
-      u.camW0.value.copy(c0.matrixWorld); u.camW1.value.copy(c1.matrixWorld);
-      u.head.value.copy(head); u.floorY.value = this.floorY;
-      u.hipY.value = Math.max(this.floorY + 0.35, Math.min(head.y - 0.62, this.floorY + 1.05));
-      u.time.value = t / 1000;
-    }
-    this.legQuad.visible = this.depthOk;
+    this.legs.update(frame, t, this._handPoints(frame));
+    this.depthOk = this.legs.ok;
     // sonst: geschaetzte Beine unter dem Kopf, mit dem Blick (weich) gedreht
     this.est.visible = !this.depthOk && this.strength > 0;
     if (this.est.visible) {
@@ -231,10 +185,28 @@ export class MixedReality {
     this.renderer.render(this.scene, this.camera);
   }
 
+  // Haende/Controller als Kugeln, die nie eingefaerbt werden
+  _handPoints(frame) {
+    const out = [], ref = this.renderer.xr.getReferenceSpace();
+    if (!frame || !ref) return out;
+    for (const src of frame.session.inputSources) {
+      if (src.hand) {
+        for (const [name, r] of JOINTS) {
+          const j = src.hand.get(name), p = j && frame.getJointPose?.(j, ref);
+          if (p) out.push({ pos: p.transform.position, r });
+        }
+      } else if (src.gripSpace) {
+        const p = frame.getPose(src.gripSpace, ref);
+        if (p) out.push({ pos: p.transform.position, r: 0.13 });
+      }
+    }
+    return out.slice(0, 10);
+  }
+
   dispose() {
     this.renderer.setAnimationLoop(null);
     removeEventListener('resize', this._onResize);
-    this.legQuad.geometry.dispose(); this.legQuad.material.dispose(); this.htex.dispose();
+    this.legs.dispose(this.scene); this.htex.dispose();
     this.renderer.dispose(); this.renderer.domElement.remove();
   }
 }

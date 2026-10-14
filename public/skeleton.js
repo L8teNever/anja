@@ -14,7 +14,23 @@ export const BONES = [
   ['thigh-r', 0.105], ['shin-r', 0.075], ['foot-r', 0.065],
 ];
 
-const UPPER_ARM = 0.29, FOREARM = 0.27, FOOT = 0.19, TORSO = 0.68;   // Nacken-Drehpunkt -> Hueftgelenk
+
+// Koerpermasse (cm): Groesse, Hueftgelenk-Hoehe, Knie-Hoehe (im Stehen, vom Boden).
+// Fehlende Werte werden aus der Groesse geschaetzt (Durchschnitts-Proportionen nach Drillis/Contini).
+export function bodyDims(p = {}) {
+  const H = (p.height || 175) / 100;
+  const hip = (p.hip || H * 52) / 100, knee = (p.knee || H * 28.5) / 100, ankle = 0.039 * H;
+  const eye = 0.936 * H, neckDrop = 0.03 * H;
+  return {
+    H, hip, knee, ankle,
+    neckDrop,                                   // Nacken-Drehpunkt unter den Augen
+    torso: Math.max(0.4, eye - neckDrop - hip),  // Nacken-Drehpunkt -> Hueftgelenk
+    shDown: 0.088 * H, shHalf: 0.105 * H,       // Schultergelenke
+    hipHalf: 0.05 * H,
+    upperArm: 0.186 * H, forearm: 0.146 * H,    // Schulter -> Ellbogen -> Handgelenk
+    thigh: Math.max(0.2, hip - knee), shin: Math.max(0.2, knee - ankle), foot: 0.11 * H,
+  };
+}
 const DOWN = new THREE.Vector3(0, -1, 0), UP = new THREE.Vector3(0, 1, 0);
 
 // Abstand Punkt (x,y,z) zur Strecke a-b
@@ -37,7 +53,7 @@ export class Skeleton {
     this.fwd = new THREE.Vector3(0, 0, -1);    // nach vorne (Brust)
     this.yaw = undefined;
     this.lying = false;
-    this.legLen = 0.86;
+    this.dim = bodyDims();
     this.ready = false;
     this.bones = BONES.map(([name, r]) => ({ name, r, a: v(), b: v(), m: new THREE.Matrix4() }));
     this.boneMap = Object.fromEntries(this.bones.map((b) => [b.name, b]));
@@ -47,6 +63,7 @@ export class Skeleton {
     this.lean = 0;                       // Vor-/Zuruecklehnen (rad)
     this.swivel = { L: 0, R: 0 };        // Ellbogen-Drehung um die Schulter-Hand-Achse (rad)
     this.ik = { L: null, R: null };
+    this.armFromWrist = { L: false, R: false };
     this.def = { l: null, r: null };
     this._B = new THREE.Matrix4(); this._Bi = new THREE.Matrix4();
   }
@@ -84,21 +101,15 @@ export class Skeleton {
     this.fwd.addScaledVector(this.torsoDir, -this.fwd.dot(this.torsoDir)).normalize();
 
     const J = this.j, T = this.torsoDir, S = this.side;
-    J.neck.copy(head).add(new THREE.Vector3(0, -0.1, 0.08).applyQuaternion(q));   // Drehpunkt hinter/unter den Augen
-    J.pelvis.copy(J.neck).addScaledVector(T, TORSO);
-    J.shL.copy(J.neck).addScaledVector(T, 0.15).addScaledVector(S, -0.18);
-    J.shR.copy(J.neck).addScaledVector(T, 0.15).addScaledVector(S, 0.18);
-    J.hipL.copy(J.pelvis).addScaledVector(S, -0.1);
-    J.hipR.copy(J.pelvis).addScaledVector(S, 0.1);
-
-    // Beinlaenge im Stehen lernen (Huefte bis Knoechel)
-    if (!this.lying && J.pelvis.y - floorY > 0.68) {
-      const ll = Math.max(0.65, Math.min(1.05, J.pelvis.y - floorY - 0.07));
-      this.legLen += (ll - this.legLen) * (this.learned ? 0.03 : 1);
-      this.learned = true;
-    }
+    J.neck.copy(head).add(new THREE.Vector3(0, -this.dim.neckDrop, 0.08).applyQuaternion(q));   // Drehpunkt hinter/unter den Augen
+    J.pelvis.copy(J.neck).addScaledVector(T, this.dim.torso);
+    J.shL.copy(J.neck).addScaledVector(T, this.dim.shDown).addScaledVector(S, -this.dim.shHalf);
+    J.shR.copy(J.neck).addScaledVector(T, this.dim.shDown).addScaledVector(S, this.dim.shHalf);
+    J.hipL.copy(J.pelvis).addScaledVector(S, -this.dim.hipHalf);
+    J.hipR.copy(J.pelvis).addScaledVector(S, this.dim.hipHalf);
 
     // Arme
+    const UPPER_ARM = this.dim.upperArm, FOREARM = this.dim.forearm;
     for (const s of ['L', 'R']) {
       const sh = J['sh' + s], el = J['el' + s], wr = J['wr' + s], w = wrists[s.toLowerCase()];
       this.ik[s] = null;
@@ -119,6 +130,16 @@ export class Skeleton {
         pole.addScaledVector(dir, -pole.dot(dir)); if (pole.lengthSq() < 1e-6) pole.copy(S); pole.normalize();
         const bi = new THREE.Vector3().crossVectors(dir, pole);
         this.ik[s] = { sh: sh.clone(), wr: wr.clone(), dir, a, h, pole: pole.clone(), bi };
+        // Hand-Tracking kennt die Richtung des Unterarms (Handgelenk -> Ellbogen): Ellbogen dorthin drehen
+        const fd = wrists[s.toLowerCase() + 'd'];
+        this.armFromWrist[s] = !!fd && h > 0.02;
+        if (this.armFromWrist[s]) {
+          const zd = fd.clone(); if (zd.dot(sh.clone().sub(wr)) < 0) zd.negate();
+          const v = wr.clone().addScaledVector(zd, FOREARM).sub(sh).addScaledVector(dir, -a);
+          const want = Math.atan2(v.dot(bi), v.dot(pole));
+          const dd = Math.atan2(Math.sin(want - this.swivel[s]), Math.cos(want - this.swivel[s]));
+          this.swivel[s] += dd * 0.5;
+        }
         const sw = this.swivel[s];
         el.copy(sh).addScaledVector(dir, a).addScaledVector(pole, h * Math.cos(sw)).addScaledVector(bi, h * Math.sin(sw));
       } else {
@@ -129,8 +150,8 @@ export class Skeleton {
 
     // Beine: eingepasst (lokal gemerkt) oder Grundhaltung
     this._basis();
-    const thigh = this.legLen * 0.52, shin = this.legLen * 0.48;
-    const standing = !this.lying && J.pelvis.y - floorY > this.legLen * 0.82;
+    const { thigh, shin, foot: FOOT } = this.dim;
+    const standing = !this.lying && J.pelvis.y - floorY > (thigh + shin) * 0.82;
     const lowSit = !this.lying && J.pelvis.y - floorY < 0.35;
     const posture = this.lying ? 'lie' : standing ? 'stand' : lowSit ? 'floor' : 'sit';
     if (posture !== this.posture) { this.posture = posture; this.leg = { l: null, r: null }; }
@@ -161,6 +182,8 @@ export class Skeleton {
     this._bones();
     this.ready = true;
   }
+
+  setProfile(p) { this.dim = bodyDims(p); this.leg = { l: null, r: null }; }
 
   // Becken-Bezug: Ursprung Becken, Achsen side / -torsoDir / fwd
   _basis() {
@@ -211,7 +234,7 @@ export class Skeleton {
     // Ellbogen: Drehwinkel, bei dem Ober- und Unterarm die meisten Punkte treffen (nicht im Rumpf)
     for (const s of ['L', 'R']) {
       const ik = this.ik[s];
-      if (!ik || ik.h < 0.03) continue;
+      if (!ik || ik.h < 0.03 || this.armFromWrist[s]) continue;   // Unterarm-Richtung aus dem Hand-Tracking ist genauer
       const neck = J.neck, pel = J.pelvis;
       let best = this.swivel[s], bestScore = -1, cur = -1;
       for (const off of [0, -0.25, 0.25, -0.5, 0.5, -0.85, 0.85, -1.3, 1.3]) {
@@ -230,7 +253,7 @@ export class Skeleton {
     for (const off of [0, -0.12, 0.12, -0.25, 0.25]) {
       const l = Math.max(-0.4, Math.min(0.45, this.lean + off));
       const t = T0.clone().multiplyScalar(Math.cos(l)).addScaledVector(F, Math.sin(l)).normalize();
-      const a = J.neck.clone().addScaledVector(t, 0.14), b = J.neck.clone().addScaledVector(t, TORSO);
+      const a = J.neck.clone().addScaledVector(t, 0.14), b = J.neck.clone().addScaledVector(t, this.dim.torso);
       const sc = count((x, y, z) => !nearLegs(x, y, z) && segDist(x, y, z, a, b) < 0.17);
       if (off === 0) curS = sc;
       if (sc > bestS) { bestS = sc; bestL = l; }
@@ -253,7 +276,7 @@ export class Skeleton {
     const R = new THREE.Matrix3().setFromMatrix4(this._B);
     kn.copy(hip).addScaledVector(d.t.clone().applyMatrix3(R), thigh);
     an.copy(kn).addScaledVector(d.s.clone().applyMatrix3(R), shin);
-    to.copy(an).addScaledVector(d.f.clone().applyMatrix3(R), FOOT);
+    to.copy(an).addScaledVector(d.f.clone().applyMatrix3(R), this.dim.foot);
   }
 
   // was ein Bein anatomisch kann (lokal, sg = -1 links / +1 rechts)
@@ -281,7 +304,7 @@ export class Skeleton {
 
   // Beine aus erkannten Punkten einpassen (A: Float32Array xyz, n Punkte; skip(x,y,z): Haende usw.)
   fit(A, n, skip = () => false) {
-    const J = this.j, thigh = this.legLen * 0.52, shin = this.legLen * 0.48;
+    const J = this.j, { thigh, shin, foot: FOOT } = this.dim;
     const P = J.pelvis, T = this.torsoDir;
     const dirFrom = (o, test, minD, maxD) => {
       const d = new THREE.Vector3(); let c = 0;

@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { ICON_PATHS } from '/icons.js';
 import { BodyTracker } from '/body-tracker.js';
 import { BodyCubes } from '/mr-cubes.js';
+import { MeasurePanel, loadProfile } from '/mr-measure.js';
 
 const BLUE = new THREE.Color(0x3d8bff);
 // Hand-Knochen (Handflaeche, Daumen, Finger) aus den WebXR-Gelenken
@@ -49,6 +50,12 @@ export class MixedReality {
     this.scene.add(this.est);
 
     this.cubes = new BodyCubes(this.scene, this.legs);
+    // Koerpermasse (Groesse, Huefte, Knie) -> Knochenlaengen
+    this.legs.skel.setProfile(loadProfile());
+    this.measure = new MeasurePanel(this.scene, {
+      onChange: (p) => this.legs.skel.setProfile(p),
+      eyeHeight: () => new THREE.Vector3().setFromMatrixPosition(this.renderer.xr.getCamera().matrixWorld).y - this.legs.floorY,
+    });
     this.ctx = { anchors: new Map() };
     // Skelett sichtbar machen (Knopf "Skelett")
     this.skelLines = new THREE.LineSegments(new THREE.BufferGeometry(),
@@ -132,15 +139,23 @@ export class MixedReality {
     const m = new THREE.Matrix4().extractRotation(c.matrixWorld);
     this.raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
     this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(m);
+    if (this.measure.open) {
+      const mh = this.raycaster.intersectObject(this.measure.mesh, false)[0];
+      if (mh) { this.measure.press(mh.uv); return; }
+    }
     const h = this.raycaster.intersectObject(this.handle, false)[0];
     if (!h) return;
-    const k = Math.min(5, Math.floor(h.uv.x * 6));
+    const k = Math.min(6, Math.floor(h.uv.x * 7));
     if (k === 0) this.end();
     else if (k === 1) this.toggleBlue();
     else if (k === 2) this.cubes.spawn(this.renderer.xr.getCamera());
     else if (k === 3) this.cubes.clear();
     else if (k === 4) { this.showSkel = !this.showSkel; this._drawHandle(); }
-    else { this.cubes.cycleBreasts(); this._drawHandle(); }
+    else if (k === 5) { this.cubes.cycleBreasts(); this._drawHandle(); }
+    else {
+      if (this.measure.open) this.measure.hide(); else this.measure.show(this.renderer.xr.getCamera(), this.legs.floorY);
+      this._drawHandle();
+    }
   }
 
   _drawHandle() {
@@ -152,16 +167,17 @@ export class MixedReality {
     ctx.beginPath(); ctx.roundRect ? ctx.roundRect((W - tw) / 2, 2, tw, 36, 18) : ctx.rect((W - tw) / 2, 2, tw, 36); ctx.fill();
     ctx.fillStyle = '#f1edf9'; ctx.fillText(t, W / 2, 20);
     const lbl = this.strength > 0.5 ? 'Blau: stark' : this.strength > 0.2 ? 'Blau: leicht' : 'Blau: aus';
-    const bw = W / 6;
+    const bw = W / 7;
     const bs = ['Brust', 'Brust S', 'Brust M', 'Brust L'][this.cubes.breastSize || 0];
-    [['exit', 'close', 'Beenden'], ['blue', 'pan_tool', lbl], ['cube', 'add_box', 'Würfel'], ['clear', 'delete_sweep', 'Alle weg'],
-      ['skel', 'accessibility_new', this.showSkel ? 'Skelett an' : 'Skelett'], ['breasts', 'person', bs]].forEach(([id, ic, label], k) => {
-      const on = this.hover === id || (id === 'skel' && this.showSkel) || (id === 'breasts' && this.cubes.breastSize > 0), x0 = k * bw;
+    [['exit', 'close', 'Beenden'], ['blue', 'pan_tool', lbl], ['cube', 'add_box', 'Würfel'], ['clear', 'delete_sweep', 'Weg'],
+      ['skel', 'accessibility_new', 'Skelett'], ['breasts', 'person', bs], ['measure', 'tune', 'Maße']].forEach(([id, ic, label], k) => {
+      const on = this.hover === id || (id === 'skel' && this.showSkel) || (id === 'breasts' && this.cubes.breastSize > 0)
+        || (id === 'measure' && this.measure?.open), x0 = k * bw;
       ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x0 + 4, 46, bw - 8, 98, 30) : ctx.rect(x0 + 4, 46, bw - 8, 98);
       ctx.fillStyle = on ? 'rgba(182,156,255,0.92)' : 'rgba(22,19,31,0.85)'; ctx.fill();
       ctx.save(); ctx.translate(x0 + bw / 2 - 18, 52); ctx.scale(36 / 24, 36 / 24); ctx.fillStyle = on ? '#1f1638' : '#f1edf9';
       ctx.fill(new Path2D(ICON_PATHS[ic])); ctx.restore();
-      ctx.font = '600 19px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = on ? '#1f1638' : '#f1edf9';
+      ctx.font = '600 18px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = on ? '#1f1638' : '#f1edf9';
       ctx.fillText(label, x0 + bw / 2, 118);
     });
     this.htex.needsUpdate = true;
@@ -213,15 +229,18 @@ export class MixedReality {
     if (was !== this.depthOk) this._drawHandle();
 
     // Hover auf dem Griff
-    let hov = null;
+    let hov = null, mhov = null;
     for (const c of this.ctrls) {
       if (!c.userData.mode || this.phone) continue;
       const m = new THREE.Matrix4().extractRotation(c.matrixWorld);
       this.raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
       this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(m);
       const h = this.raycaster.intersectObject(this.handle, false)[0];
-      if (h) hov = ['exit', 'blue', 'cube', 'clear', 'skel', 'breasts'][Math.min(5, Math.floor(h.uv.x * 6))];
+      if (h) hov = ['exit', 'blue', 'cube', 'clear', 'skel', 'breasts', 'measure'][Math.min(6, Math.floor(h.uv.x * 7))];
+      if (this.measure.open) { const mh = this.raycaster.intersectObject(this.measure.mesh, false)[0]; if (mh) mhov = mh.uv; }
     }
+    this.measure.setHover(mhov);
+    this.measure.update(this.legs.skel.j.pelvis, this.legs.floorY);
     if (hov !== this.hover) { this.hover = hov; this._drawHandle(); }
     this.renderer.render(this.scene, this.camera);
   }
@@ -258,6 +277,7 @@ export class MixedReality {
           for (const d of [0.1, 0.2]) pts.push(new THREE.Vector3(0, 0, d).applyMatrix4(m));
           anchors.set(key, { m, pts, r: 0.07 });
           this.wrists[src.handedness === 'left' ? 'l' : 'r'] = new THREE.Vector3().setFromMatrixPosition(m);
+          this.wrists[src.handedness === 'left' ? 'ld' : 'rd'] = new THREE.Vector3(0, 0, 1).transformDirection(m);   // Richtung Ellbogen
         }
       } else if (src.gripSpace) {
         const p = frame.getPose(src.gripSpace, ref);
@@ -294,7 +314,7 @@ export class MixedReality {
   dispose() {
     this.renderer.setAnimationLoop(null);
     removeEventListener('resize', this._onResize);
-    this.cubes.dispose(); this.legs.dispose(this.scene); this.htex.dispose();
+    this.cubes.dispose(); this.measure.dispose(); this.legs.dispose(this.scene); this.htex.dispose();
     this.renderer.dispose(); this.renderer.domElement.remove();
   }
 }

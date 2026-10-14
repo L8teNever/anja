@@ -149,9 +149,13 @@ stehend, sitzend und liegend.
   Pinch/Trigger (nah oder per Strahl), loslassen an Hand, Unterarm, Bein, Bauch oder Brust – er haftet
   dort und bewegt sich mit (Hände/Controller exakt, sonst mit dem Knochen des Skeletts).
   Sonst bleibt er im Raum stehen. „Alle weg“ entfernt alle.
+- **Maße** (Knopf „Maße“): Größe, Hüftgelenk- und Knie-Höhe in cm per −5/−1/+1/+5 (oder „Größe messen“: gerade
+  hinstellen, geradeaus schauen). Daraus werden alle Knochenlängen berechnet (Arme, Rumpf, Ober-/Unterschenkel).
+  Während das Menü offen ist, fahren Ringe vom Boden auf Hüft- und Knie-Höhe – zum Prüfen an dir selbst.
+  Der Ellbogen folgt der Unterarm-Richtung aus dem Hand-Tracking.
 - **Brust** (Knopf „Brust“): 3D-Brüste am Oberkörper, Größe S/M/L/aus. Sie haften am Rumpf-Knochen und lassen
   sich greifen und verschieben.
-- Unten im Blickfeld: „Beenden“, „Blau: stark/leicht/aus“, „Würfel“, „Alle weg“, „Skelett“, „Brust“, darüber der Status.
+- Unten im Blickfeld: „Beenden“, „Blau: stark/leicht/aus“, „Würfel“, „Alle weg“, „Skelett“, „Brust“, „Maße“, darüber der Status.
 
 ## Raum-Modus (Durchsicht ohne Video)
 

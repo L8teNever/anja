@@ -140,7 +140,11 @@ stehend, sitzend und liegend.
   erkannt und ausgespart. Von Händen, Körper-Gelenken (falls die Brille Body-Tracking liefert) und
   Brust/Bauch unter dem Kinn aus wächst die Erkennung über zusammenhängende Tiefe auf den ganzen Körper.
 - **Ohne Tiefensensor** (ältere Brillen, Handy): Beine werden aus der Kopfposition geschätzt.
-- Unten im Blickfeld: „Beenden“ und „Blau: stark/leicht/aus“, darüber der Status.
+- **Würfel anheften** (`public/mr-cubes.js`): „Würfel“ erzeugt einen Würfel vor dir. Greifen mit
+  Pinch/Trigger (nah oder per Strahl), loslassen an Hand, Unterarm, Bein, Bauch oder Brust – er haftet
+  dort und bewegt sich mit (Hände/Controller exakt, Körper über Nacken-Bezug + Tiefensensor-Nachführung).
+  Sonst bleibt er im Raum stehen. „Alle weg“ entfernt alle.
+- Unten im Blickfeld: „Beenden“, „Blau: stark/leicht/aus“, „Würfel“, „Alle weg“, darüber der Status.
 
 ## Raum-Modus (Durchsicht ohne Video)
 

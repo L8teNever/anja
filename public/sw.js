@@ -24,6 +24,7 @@ const SHELL = [
   '/room.js',
   '/mr.js',
   '/body-tracker.js',
+  '/mr-cubes.js',
   '/room-surfaces.js',
   '/figure-motion.js',
   '/radial-menu.js',

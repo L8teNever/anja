@@ -125,6 +125,7 @@ export class BodyTracker {
     this.queue = new Int32Array(W * H);
     this.n = 0;
     this.grabFail = false;
+    this.pts = new Float32Array(W * H * 3); this.npts = 0; this.segId = 0;
   }
 
   // pro XR-Frame; points: Liste von {pos, r} (Haende/Controller/Koerper-Gelenke)
@@ -269,6 +270,10 @@ export class BodyTracker {
         lab[j] = 1; q[qt++] = j;
       }
     }
+    // erkannte Koerperpunkte (Welt) fuer angeheftete Objekte
+    let np = 0;
+    for (let i = 0; i < N; i++) if (lab[i] === 1) { this.pts[np * 3] = P(i, 0); this.pts[np * 3 + 1] = P(i, 1); this.pts[np * 3 + 2] = P(i, 2); np++; }
+    this.npts = np; this.segId++;
     // Maske (1 Punkt aufgeweitet fuer weiche Kanten; die Feinarbeit macht der Shader)
     const M = this.maskData;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -280,6 +285,17 @@ export class BodyTracker {
     this.maskTex.needsUpdate = true;
     u.maskVP.value.fromArray(this._P).multiply(new THREE.Matrix4().fromArray(this._V));
     u.maskOn.value = 1;
+  }
+
+  // naechster erkannter Koerperpunkt zu p (innerhalb maxD), sonst null
+  nearest(p, maxD) {
+    let best = maxD * maxD, bi = -1;
+    const A = this.pts;
+    for (let k = 0; k < this.npts; k++) {
+      const dx = A[k * 3] - p.x, dy = A[k * 3 + 1] - p.y, dz = A[k * 3 + 2] - p.z, d = dx * dx + dy * dy + dz * dz;
+      if (d < best) { best = d; bi = k; }
+    }
+    return bi < 0 ? null : new THREE.Vector3(A[bi * 3], A[bi * 3 + 1], A[bi * 3 + 2]);
   }
 
   setBase(y) { this.floorBase = y; this.floorY = y; }
